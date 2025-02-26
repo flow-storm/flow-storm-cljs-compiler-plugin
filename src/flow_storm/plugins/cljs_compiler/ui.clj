@@ -48,6 +48,7 @@
 
 (defn- arrow [& {:keys [from-x from-y to-x to-y on-click]}]
   (doto (Line. from-x from-y to-x to-y)
+    (.setStyle "-fx-stroke-width: 5;")
     (.setOnMouseClicked
      (ui-utils/event-handler
          [mev]
@@ -68,36 +69,54 @@
                                                 (.setLayoutY y)
                                                 (.setPrefWidth width)
                                                 (.setPrefHeight height)
-                                                (.setStyle "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: pink;"))]
+                                                (.setStyle (case (:type node)
+                                                             :analysis "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: #a31c32;"
+                                                             :parsing  "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: #7a3e16;")))]
 
                                  (conj acc node-box)))
                              []
                              nodes)
         arrows-vec (reduce-kv (fn [arrows node-id-from to-ids]
                                 (reduce (fn [arrs node-id-to]
-                                          (let [layout-from (node-id->layout node-id-from)
-                                                layout-to (node-id->layout node-id-to)
-                                                from-x (+ (:x layout-from) (/ (:width layout-from) 2))
-                                                from-y (+ (:y layout-from) (:height layout-from))
-                                                to-x   (+ (:x layout-to) (/ (:width layout-to) 2))
-                                                to-y   (:y layout-to)
+                                          (let [node-from (node-id->layout node-id-from)
+                                                node-to (node-id->layout node-id-to)
+                                                arr-offset 50
+                                                call-from-x (+ (:x node-from) (/ (:width node-from) 2))
+                                                call-from-y (+ (:y node-from) (:height node-from))
+                                                call-to-x   (- (+ (:x node-to) (/ (:width node-to) 2)) arr-offset)
+                                                call-to-y   (:y node-to)
+
+                                                ret-from-x (+ (:x node-to) (/ (:width node-to) 2) arr-offset)
+                                                ret-from-y (:y node-to)
+                                                ret-to-x   (+ (:x node-from) (/ (:width node-from) 2))
+                                                ret-to-y   (+ (:y node-from) (:width node-from))
+
                                                 node (nodes node-id-from)
-                                                arr (arrow :from-x from-x
-                                                           :from-y from-y
-                                                           :to-x   to-x
-                                                           :to-y   to-y
-                                                           :on-click (fn [mev]
-                                                                       (prn "@@@@ clicked" node)
-                                                                       #_(let [val-ref (case (:type entry)
-                                                                                         :fn-return (:result entry)
-                                                                                         :expr (:result entry))]
-                                                                           (runtime-api/data-window-push-val-data rt-api
-                                                                                                                  :plugins/cljs-compiler
-                                                                                                                  val-ref
-                                                                                                                  {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
-                                                                                                                   :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
-                                                                                                                   :root? true}))))]
-                                            (conj arrs arr)))
+                                                call-arr (arrow :from-x call-from-x
+                                                                :from-y call-from-y
+                                                                :to-x   call-to-x
+                                                                :to-y   call-to-y
+                                                                :on-click (fn [mev]
+                                                                            (let [{:keys [fn-args-ref]} (nodes node-id-to)]
+                                                                              (runtime-api/data-window-push-val-data rt-api
+                                                                                                                     :plugins/cljs-compiler
+                                                                                                                     fn-args-ref
+                                                                                                                     {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
+                                                                                                                      :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnCall"
+                                                                                                                      :root? true}))))
+                                                ret-arr (arrow :from-x ret-from-x
+                                                               :from-y ret-from-y
+                                                               :to-x   ret-to-x
+                                                               :to-y   ret-to-y
+                                                               :on-click (fn [mev]
+                                                                           (let [{:keys [ret-ref throwable-ref]} (nodes node-id-to)]
+                                                                              (runtime-api/data-window-push-val-data rt-api
+                                                                                                                     :plugins/cljs-compiler
+                                                                                                                     (or ret-ref throwable-ref)
+                                                                                                                     {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
+                                                                                                                      :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnReturn"
+                                                                                                                      :root? true}))))]
+                                            (into arrs [call-arr ret-arr])))
                                  arrows
                                  to-ids))
                           []
@@ -130,7 +149,7 @@
                                                            :to-x   to-x
                                                            :to-y   to-y
                                                            :on-click (fn [mev]
-                                                                       (prn "@@@@ clicked" entry)
+                                                                       (prn "@@@@ clicked HL")
                                                                        (let [val-ref (case (:type entry)
                                                                                        :fn-return (:result entry)
                                                                                        :expr (:result entry))]
@@ -180,7 +199,7 @@
                           :branch-fn :childs
                           :childs-fn :childs
                           :id-fn :node-id
-                          :v-gap 50})
+                          :v-gap 200})
         analysis-layout-size (layout-size analysis-layout)
         high-level-layout (layout-tree
                            (graph->nested-tree high-level-graph)
@@ -200,22 +219,11 @@
                                            (translate-layout [(:x analysis-box-layout)
                                                               (:y analysis-box-layout)]
                                                              analysis-layout))
-        scale (Scale.)
+
         dia-pane (doto (ui/pane :childs [high-level-pane analysis-pane])
                    (.setPrefWidth (:width high-level-layout-size))
-                   (.setPrefHeight (:height high-level-layout-size))
-                   (.setOnScroll (ui-utils/event-handler
-                                     [sev]
-                                   (let [delta-y (.getDeltaY sev)]
-                                     (prn "@@@@ delta-y" delta-y)))))
-        ]
-
-
-    (-> dia-pane
-        .getTransforms
-        (.add scale))
-    dia-pane
-    ))
+                   (.setPrefHeight (:height high-level-layout-size)))]
+    dia-pane))
 
 
 (fs-plugins/register-plugin
@@ -233,11 +241,38 @@
                                                                           :plugins.cljs-compiler/extract-compilation-graphs
                                                                           [(parse-long (.getText flow-id-txt))])
 
-                                              diagram-pane (build-diagram-pane compilation-graphs)]
+                                              diagram-pane (build-diagram-pane compilation-graphs)
+                                              scale (Scale. 1 1 0 0)
+                                              *last-coord (atom [0 0])]
 
-                                          #_(-> diagram-pane
-                                              .prefWidthProperty
-                                              (.bind (.widthProperty scroll-pane)))
+                                          (-> diagram-pane .getTransforms (.add scale))
+
+                                          (doto diagram-pane
+                                            (.setOnScroll (ui-utils/event-handler
+                                                              [sev]
+                                                            (let [delta-y (.getDeltaY sev)
+                                                                  curr-factor (.getX scale)
+                                                                  new-factor (cond
+                                                                               (pos? delta-y) (* curr-factor 1.1)
+                                                                               (neg? delta-y) (/ curr-factor 1.1)
+                                                                               :else          curr-factor)]
+                                                              (.setX scale new-factor)
+                                                              (.setY scale new-factor))
+                                                            (.consume sev)))
+                                            (.setOnMousePressed (ui-utils/event-handler
+                                                                    [mev]
+                                                                  (reset! *last-coord [(.getSceneX mev) (.getSceneY mev)])))
+                                            (.setOnMouseDragged (ui-utils/event-handler
+                                                                    [mev]
+                                                                  (let [curr-factor (.getX scale)
+                                                                        [last-x last-y] @*last-coord
+                                                                        curr-x (.getSceneX mev)
+                                                                        curr-y (.getSceneY mev)
+                                                                        delta-x (- curr-x last-x)
+                                                                        delta-y (- curr-y last-y)]
+                                                                    (reset! *last-coord [curr-x curr-y])
+                                                                    (.setHvalue scroll-pane (- (.getHvalue scroll-pane) (/ delta-x (.getWidth diagram-pane))))
+                                                                    (.setVvalue scroll-pane (- (.getVvalue scroll-pane) (/ delta-y (.getHeight diagram-pane))))))))
 
                                           (.setContent scroll-pane diagram-pane))))))
                      tools-box (ui/h-box :childs [(Label. "FlowId:") flow-id-txt refresh-btn])
