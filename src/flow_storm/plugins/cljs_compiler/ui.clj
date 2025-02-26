@@ -7,73 +7,215 @@
             [clojure.string :as str]
             [clj-tree-layout.core :refer [layout-tree]])
   (:import [javafx.scene.control Label Button TextField]
+           [javafx.scene.paint Paint]
+           [javafx.scene.transform Scale]
            [javafx.scene.layout HBox VBox]
-           [javafx.scene.shape Line]
+           [javafx.scene.shape Line Rectangle]
            [javafx.event EventHandler]
            [javafx.scene Node]))
 
-(defn nodes-by-id [tree]
-  (reduce (fn [nodes-by-id n]
-            (assoc nodes-by-id (:node-id n) (dissoc n :childs)))
-   {}
-   (tree-seq :childs :childs tree)))
+(defn- graph->nested-tree
+  ([{:keys [nodes edges] :as g}]
+   (let [root (some (fn [node] (when (:root? node) node))
+                    (vals nodes))]
+     (graph->nested-tree g root)))
 
-(defn edges [tree]
-  (reduce (fn [edges {:keys [node-id childs]}]
-            (into edges (mapv (fn [c] [node-id (:node-id c)]) childs)))
-          []
-          (tree-seq :childs :childs tree)))
+  ([{:keys [nodes edges] :as g} node]
+   (let [childs (mapv (fn [nid] (graph->nested-tree g (get nodes nid))) (get edges (:node-id node)))]
+     (assoc node :childs childs))))
 
-(defn build-diagram-pane [outer-tree]
-  (let [node-id->node (nodes-by-id outer-tree)
-        node-id->layout (layout-tree
-                         outer-tree
-                         {:sizes (zipmap (mapv :node-id (tree-seq :childs :childs outer-tree))
-                                         (repeat [200 80]))
+(defn- labeled-container [& {:keys  [label x y width height]}]
+  (let [rect (doto (Rectangle. 0 0 width height)
+               (.setFill  (Paint/valueOf "#336699")))
+        lbl (doto (ui/label :text label)
+              (.setLayoutX 10)
+              (.setLayoutY 10))]
+    (doto (ui/pane
+           :childs
+           [rect lbl])
+      (.setLayoutX x)
+      (.setLayoutY y)
+      (.setPrefWidth width)
+      (.setPrefHeight height))))
+
+(defn- labeled-node [& {:keys  [label x y width height]}]
+  (doto (ui/label :text label)
+    (.setLayoutX x)
+    (.setLayoutY y)
+    (.setPrefWidth width)
+    (.setPrefHeight height)
+    (.setStyle "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: pink;")))
+
+(defn- arrow [& {:keys [from-x from-y to-x to-y on-click]}]
+  (doto (Line. from-x from-y to-x to-y)
+    (.setOnMouseClicked
+     (ui-utils/event-handler
+         [mev]
+       (on-click mev)))))
+
+(defn- build-analysis-pane [{:keys [nodes edges]} node-id->layout]
+  (let [nodes-vec (reduce-kv (fn [acc nid node]
+                               (let [{:keys [x y width height]} (node-id->layout nid)
+                                     node (nodes nid)
+                                     fn-lbl (case (:type node)
+                                              :analysis "Analysis"
+                                              :parsing  "Parse")
+                                     node-box (doto
+                                                  (ui/v-box
+                                                   :childs [(ui/label :text "Analyzing")
+                                                            (ui/label :text (:form-prev node))])
+                                                (.setLayoutX x)
+                                                (.setLayoutY y)
+                                                (.setPrefWidth width)
+                                                (.setPrefHeight height)
+                                                (.setStyle "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: pink;"))]
+
+                                 (conj acc node-box)))
+                             []
+                             nodes)
+        arrows-vec (reduce-kv (fn [arrows node-id-from to-ids]
+                                (reduce (fn [arrs node-id-to]
+                                          (let [layout-from (node-id->layout node-id-from)
+                                                layout-to (node-id->layout node-id-to)
+                                                from-x (+ (:x layout-from) (/ (:width layout-from) 2))
+                                                from-y (+ (:y layout-from) (:height layout-from))
+                                                to-x   (+ (:x layout-to) (/ (:width layout-to) 2))
+                                                to-y   (:y layout-to)
+                                                node (nodes node-id-from)
+                                                arr (arrow :from-x from-x
+                                                           :from-y from-y
+                                                           :to-x   to-x
+                                                           :to-y   to-y
+                                                           :on-click (fn [mev]
+                                                                       (prn "@@@@ clicked" node)
+                                                                       #_(let [val-ref (case (:type entry)
+                                                                                         :fn-return (:result entry)
+                                                                                         :expr (:result entry))]
+                                                                           (runtime-api/data-window-push-val-data rt-api
+                                                                                                                  :plugins/cljs-compiler
+                                                                                                                  val-ref
+                                                                                                                  {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
+                                                                                                                   :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
+                                                                                                                   :root? true}))))]
+                                            (conj arrs arr)))
+                                 arrows
+                                 to-ids))
+                          []
+                          edges)
+        nodes-and-arrows-vec (-> nodes-vec
+                                (into arrows-vec))]
+    (ui/pane :childs nodes-and-arrows-vec)))
+
+(defn- build-high-level-pane [{:keys [nodes edges]} node-id->layout]
+  (let [nodes-vec (reduce-kv (fn [acc nid node]
+                               (let [{:keys [x y width height]} (node-id->layout nid)]
+                                 (conj acc (labeled-container :label (name (:node-id node))
+                                                              :x x
+                                                              :y y
+                                                              :width width
+                                                              :height height))))
+                             []
+                             nodes)
+        arrows-vec (reduce-kv (fn [arrows node-id-from to-ids]
+                                (reduce (fn [arrs node-id-to]
+                                          (let [layout-from (node-id->layout node-id-from)
+                                                layout-to (node-id->layout node-id-to)
+                                                from-x (+ (:x layout-from) (/ (:width layout-from) 2))
+                                                from-y (+ (:y layout-from) (:height layout-from))
+                                                to-x   (+ (:x layout-to) (/ (:width layout-to) 2))
+                                                to-y   (:y layout-to)
+                                                {:keys [entry]} (nodes node-id-from)
+                                                arr (arrow :from-x from-x
+                                                           :from-y from-y
+                                                           :to-x   to-x
+                                                           :to-y   to-y
+                                                           :on-click (fn [mev]
+                                                                       (prn "@@@@ clicked" entry)
+                                                                       (let [val-ref (case (:type entry)
+                                                                                       :fn-return (:result entry)
+                                                                                       :expr (:result entry))]
+                                                                         (runtime-api/data-window-push-val-data rt-api
+                                                                                                                :plugins/cljs-compiler
+                                                                                                                val-ref
+                                                                                                                {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
+                                                                                                                 :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
+                                                                                                                 :root? true}))))]
+                                            (conj arrs arr)))
+                                 arrows
+                                 to-ids))
+                          []
+                          edges)
+        nodes-and-arrows-vec (-> nodes-vec
+                                (into arrows-vec))]
+    (ui/pane :childs nodes-and-arrows-vec)))
+
+(defn- layout-size [layout]
+  (let [{:keys [max-x max-y min-x min-y]}
+        (reduce (fn [acc {:keys [x y width height]}]
+                  (-> acc
+                      (update :max-x max (+ x width))
+                      (update :max-y max (+ y height))
+                      (update :min-x min x)
+                      (update :min-y min y)))
+                {:max-x Long/MIN_VALUE
+                 :max-y Long/MIN_VALUE
+                 :min-x Long/MAX_VALUE
+                 :min-y Long/MAX_VALUE}
+                (vals layout))]
+    {:width  (- max-x min-x)
+     :height (- max-y min-y)}))
+
+(defn- translate-layout [[x y] layout]
+  (reduce-kv (fn [acc nid lay]
+               (assoc acc nid (-> lay
+                                  (update :x #(+ x %))
+                                  (update :y #(+ y %)))))
+             {}
+             layout))
+
+(defn build-diagram-pane [{:keys [high-level-graph analysis-graph]}]
+  (let [analysis-layout (layout-tree
+                         (graph->nested-tree analysis-graph)
+                         {:sizes (zipmap (keys (:nodes analysis-graph)) (repeat [200 200]))
                           :branch-fn :childs
                           :childs-fn :childs
                           :id-fn :node-id
-                          :v-gap 100})
-        nodes-vec (reduce-kv (fn [acc nid node]
-                               (let [{:keys [x y width height]} (node-id->layout nid)]
-                                 (conj acc
-                                       (doto (ui/label :text (name nid))
-                                         (.setLayoutX x)
-                                         (.setLayoutY y)
-                                         (.setPrefWidth width)
-                                         (.setPrefHeight height)
-                                         (.setStyle "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: pink;")))))
-                             []
-                             node-id->node)
-        lines-vec (reduce (fn [lines [node-id-from node-id-to]]
-                            (let [layout-from (node-id->layout node-id-from)
-                                  layout-to (node-id->layout node-id-to)
-                                  from-x (+ (:x layout-from) (/ (:width layout-from) 2))
-                                  from-y (+ (:y layout-from) (:height layout-from))
-                                  to-x   (+ (:x layout-to) (/ (:width layout-to) 2))
-                                  to-y   (:y layout-to)
-                                  {:keys [entry]} (node-id->node node-id-from)
-                                  line (doto (Line. from-x from-y to-x to-y)
-                                         (.setOnMouseClicked
-                                          (ui-utils/event-handler
-                                              [mev]
-                                            (prn "@@@@ clicked" entry)
-                                            (let [val-ref (case (:type entry)
-                                                            :fn-return (:result entry)
-                                                            :expr (:result entry))]
-                                              (runtime-api/data-window-push-val-data rt-api
-                                                                                     :plugins/cljs-compiler
-                                                                                     val-ref
-                                                                                     {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
-                                                                                      :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
-                                                                                      :root? true}))
-                                            )))]
-                              (conj lines line)))
-                   []
-                   (edges outer-tree))
-        nodes-and-lines-vec (-> nodes-vec
-                                (into lines-vec))]
-    (ui/pane :childs nodes-and-lines-vec)))
+                          :v-gap 50})
+        analysis-layout-size (layout-size analysis-layout)
+        high-level-layout (layout-tree
+                           (graph->nested-tree high-level-graph)
+                           {:sizes {:read-ret          [200 80]
+                                    :repl-wrapping-ret [200 80]
+                                    :analysis-ret      [(:width analysis-layout-size) (:height analysis-layout-size)]
+                                    :emission-ret      [200 80]
+                                    :output            [200 80]}
+                            :branch-fn :childs
+                            :childs-fn :childs
+                            :id-fn :node-id
+                            :v-gap 100})
+        high-level-layout-size (layout-size high-level-layout)
+        analysis-box-layout (:analysis-ret high-level-layout)
+        high-level-pane (build-high-level-pane high-level-graph high-level-layout)
+        analysis-pane (build-analysis-pane analysis-graph
+                                           (translate-layout [(:x analysis-box-layout)
+                                                              (:y analysis-box-layout)]
+                                                             analysis-layout))
+        scale (Scale.)
+        dia-pane (doto (ui/pane :childs [high-level-pane analysis-pane])
+                   (.setPrefWidth (:width high-level-layout-size))
+                   (.setPrefHeight (:height high-level-layout-size))
+                   (.setOnScroll (ui-utils/event-handler
+                                     [sev]
+                                   (let [delta-y (.getDeltaY sev)]
+                                     (prn "@@@@ delta-y" delta-y)))))
+        ]
+
+
+    (-> dia-pane
+        .getTransforms
+        (.add scale))
+    dia-pane
+    ))
 
 
 (fs-plugins/register-plugin
@@ -86,13 +228,14 @@
                                    (.setOnAction
                                     (reify javafx.event.EventHandler
                                       (handle [_ _]
-                                        (let [{:keys [outer-tree]} (runtime-api/call-by-fn-key rt-api
-                                                                                               :plugins.cljs-compiler/extract-compilation-tree
-                                                                                               [(parse-long (.getText flow-id-txt))])
+                                        (let [compilation-graphs
+                                              (runtime-api/call-by-fn-key rt-api
+                                                                          :plugins.cljs-compiler/extract-compilation-graphs
+                                                                          [(parse-long (.getText flow-id-txt))])
 
-                                              diagram-pane (build-diagram-pane outer-tree)]
+                                              diagram-pane (build-diagram-pane compilation-graphs)]
 
-                                          (-> diagram-pane
+                                          #_(-> diagram-pane
                                               .prefWidthProperty
                                               (.bind (.widthProperty scroll-pane)))
 

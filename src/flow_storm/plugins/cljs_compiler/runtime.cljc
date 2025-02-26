@@ -1,6 +1,7 @@
 (ns flow-storm.plugins.cljs-compiler.runtime
   (:require [flow-storm.runtime.indexes.api :as ia]
-            [flow-storm.runtime.debuggers-api :as dbg-api]))
+            [flow-storm.runtime.debuggers-api :as dbg-api]
+            [flow-storm.runtime.values :as rt-values]))
 
 (defn get-compilation-timeline
   "Return the first timeline that recorded an entry with a
@@ -15,6 +16,79 @@
                         tl)
               tl)))    
         (ia/all-threads-ids flow-id)))
+
+(defn node-id [entry]
+  (ia/entry-idx entry))
+
+(defn extract-analysis-graph* [flow-id thread-id comp-timeline *nodes *edges entry parent-node-id]
+  (when entry
+    (let [node-id (node-id entry)
+          interesting-node (cond
+                             
+                             (and (ia/fn-call-trace? entry)
+                                  (= "cljs.analyzer" (ia/get-fn-ns entry))
+                                  (= "analyze*" (ia/get-fn-name entry)))
+                             {:type :analysis
+                              :root? (nil? parent-node-id)
+                              :node-id node-id
+                              :thread-id thread-id
+                              :idx (ia/entry-idx entry)
+                              :form-prev (pr-str (get (ia/get-fn-args entry) 1))
+                              :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))}
+
+                             (and (ia/fn-call-trace? entry)
+                                  (= "cljs.analyzer" (ia/get-fn-ns entry))
+                                  (= "parse" (ia/get-fn-name entry)))
+                             {:type :parsing
+                              :node-id node-id
+                              :thread-id thread-id
+                              :idx (ia/entry-idx entry)
+                              :form-prev (pr-str (get (ia/get-fn-args entry) 2))
+                              :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))}
+
+                             :else
+                             nil)
+          
+          interesting-node (when interesting-node
+                             (let [fn-end (get comp-timeline (ia/get-fn-ret-idx entry))]
+                               (cond
+                                 (ia/fn-return-trace? fn-end)
+                                 (assoc interesting-node :ret-ref (rt-values/reference-value! (ia/get-expr-val fn-end)))
+
+                                 (ia/fn-unwind-trace? fn-end)
+                                 (assoc interesting-node :throwable-ref (rt-values/reference-value! (ia/get-throwable fn-end))))))]
+      (when interesting-node
+        (swap! *nodes assoc node-id interesting-node)
+        (when parent-node-id
+          (swap! *edges (fn [edgs] (update edgs parent-node-id conj node-id)))))
+      
+      (doseq [[_ _ cidx] (ia/callstack-node-childs flow-id thread-id (ia/entry-idx entry))]
+        (let [child-entry (get comp-timeline cidx)]
+          (extract-analysis-graph* flow-id thread-id comp-timeline *nodes *edges child-entry (or (:node-id interesting-node)
+                                                                                                parent-node-id)))))))
+
+(defn extract-analysis-graph [flow-id thread-id from-form]
+  (let [comp-timeline (ia/get-timeline flow-id thread-id)
+        root-analysis-fn-call (some (fn [entry]
+                                      (when (and (ia/fn-call-trace? entry)
+                                                 (= "cljs.analyzer" (ia/get-fn-ns entry))
+                                                 (= "analyze*" (ia/get-fn-name entry))
+                                                 (if from-form
+                                                   (= from-form (get (ia/get-fn-args entry) 1))
+                                                   true))
+                                        entry))
+                                    comp-timeline)
+        *nodes (atom {})
+        *edges (atom {})]
+    
+    (extract-analysis-graph* flow-id thread-id comp-timeline *nodes *edges root-analysis-fn-call nil)
+    {:nodes @*nodes
+     :edges @*edges}))
+
+(comment
+  (def at (extract-analysis-graph 0 27 '(defn sum [a b] (+ a b))))
+  (def at (extract-analysis-graph 0 27 nil))
+  (graph->nested-tree at))
 
 (defn find-high-level-entries [comp-timeline]
   (reduce (fn [hl-entries entry]
@@ -57,7 +131,7 @@
            :emission-ret nil}
           comp-timeline))
 
-(defn extract-compilation-tree [flow-id]
+(defn extract-compilation-graphs [flow-id]
   (let [comp-timeline (get-compilation-timeline flow-id)
         {:keys [read-ret repl-wrapping-ret analysis-ret emission-ret] :as hl-entries}
         (find-high-level-entries comp-timeline)]
@@ -65,15 +139,22 @@
     (when-not (and read-ret repl-wrapping-ret analysis-ret emission-ret)
       (throw (ex-info "Couldn't find all high level entries" {:hl-entries hl-entries})))
     
-    {:outer-tree {:node-id :read-ret
-                  :entry read-ret
-                  :childs [{:node-id :repl-wrapping-ret
-                            :entry repl-wrapping-ret
-                            :childs [{:node-id :analysis-ret
-                                      :entry analysis-ret
-                                      :childs [{:node-id :emission-ret
-                                                :entry emission-ret
-                                                :childs [{:node-id :output}]}]}]}]}}))
+    {:high-level-graph {:nodes {:read-ret {:node-id :read-ret
+                                           :entry read-ret
+                                           :root? true}
+                                :repl-wrapping-ret {:node-id :repl-wrapping-ret
+                                                    :entry repl-wrapping-ret}
+                                :analysis-ret {:node-id :analysis-ret
+                                               :entry analysis-ret}
+                                :emission-ret {:node-id :emission-ret
+                                               :entry emission-ret}
+                                :output {:node-id :output}}
+                        :edges {:read-ret [:repl-wrapping-ret]
+                                :repl-wrapping-ret [:analysis-ret]
+                                :analysis-ret [:emission-ret]
+                                :emission-ret [:output]
+                                :output []}} 
+     :analysis-graph (extract-analysis-graph 0 27 nil)}))
 
 
 
@@ -97,4 +178,4 @@
     :childs-fn :childs
     :id-fn :node-id})
   )
-(dbg-api/register-api-function :plugins.cljs-compiler/extract-compilation-tree extract-compilation-tree)
+(dbg-api/register-api-function :plugins.cljs-compiler/extract-compilation-graphs extract-compilation-graphs)
