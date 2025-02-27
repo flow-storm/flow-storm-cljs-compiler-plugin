@@ -8,7 +8,7 @@
             [clj-tree-layout.core :refer [layout-tree]])
   (:import [javafx.scene.control Label Button TextField]
            [javafx.scene.paint Paint]
-           [javafx.scene.transform Scale]
+           [javafx.scene.transform Scale Translate]
            [javafx.scene.layout HBox VBox]
            [javafx.scene.shape Line Rectangle]
            [javafx.event EventHandler]
@@ -225,62 +225,68 @@
                    (.setPrefHeight (:height high-level-layout-size)))]
     dia-pane))
 
+(defn- refresh-click [flow-id {:keys [on-new-diagram-pane]}]
+  (let [compilation-graphs
+        (runtime-api/call-by-fn-key rt-api
+                                    :plugins.cljs-compiler/extract-compilation-graphs
+                                    [flow-id])
+
+        diagram-pane (build-diagram-pane compilation-graphs)
+        translation (Translate. 0 0)
+        scale (Scale. 1 1)
+        *last-coord (atom [0 0])]
+
+    (-> diagram-pane .getTransforms (.addAll [scale translation]))
+
+
+    (doto diagram-pane
+      (.setOnScroll (ui-utils/event-handler
+                        [sev]
+                      (let [delta-y (.getDeltaY sev)
+                            curr-factor (.getX scale)
+                            new-factor (cond
+                                         (pos? delta-y) (* curr-factor 1.1)
+                                         (neg? delta-y) (/ curr-factor 1.1)
+                                         :else          curr-factor)]
+                        (.setX scale new-factor)
+                        (.setY scale new-factor))
+                      (.consume sev)))
+      (.setOnMousePressed (ui-utils/event-handler
+                              [mev]
+                            (reset! *last-coord [(.getSceneX mev) (.getSceneY mev)])))
+      (.setOnMouseDragged (ui-utils/event-handler
+                              [mev]
+                            (let [curr-scale (.getX scale)
+                                  curr-trans-x (.getX translation)
+                                  curr-trans-y (.getY translation)
+                                  [last-x last-y] @*last-coord
+                                  curr-x (.getSceneX mev)
+                                  curr-y (.getSceneY mev)
+                                  delta-x (/ (- curr-x last-x) curr-scale)
+                                  delta-y (/ (- curr-y last-y) curr-scale)]
+                              (reset! *last-coord [curr-x curr-y])
+                              (.setX translation (+ curr-trans-x delta-x))
+                              (.setY translation (+ curr-trans-y delta-y))))))
+    (on-new-diagram-pane diagram-pane)))
 
 (fs-plugins/register-plugin
  :cljs-compiler
  {:label "Cljs compiler"
   :on-create (fn [_]
-               (let [scroll-pane (ui/scroll-pane)
-                     flow-id-txt (TextField. "0")
-                     refresh-btn (doto (Button. "Refresh")
-                                   (.setOnAction
-                                    (reify javafx.event.EventHandler
-                                      (handle [_ _]
-                                        (let [compilation-graphs
-                                              (runtime-api/call-by-fn-key rt-api
-                                                                          :plugins.cljs-compiler/extract-compilation-graphs
-                                                                          [(parse-long (.getText flow-id-txt))])
-
-                                              diagram-pane (build-diagram-pane compilation-graphs)
-                                              scale (Scale. 1 1 0 0)
-                                              *last-coord (atom [0 0])]
-
-                                          (-> diagram-pane .getTransforms (.add scale))
-
-                                          (doto diagram-pane
-                                            (.setOnScroll (ui-utils/event-handler
-                                                              [sev]
-                                                            (let [delta-y (.getDeltaY sev)
-                                                                  curr-factor (.getX scale)
-                                                                  new-factor (cond
-                                                                               (pos? delta-y) (* curr-factor 1.1)
-                                                                               (neg? delta-y) (/ curr-factor 1.1)
-                                                                               :else          curr-factor)]
-                                                              (.setX scale new-factor)
-                                                              (.setY scale new-factor))
-                                                            (.consume sev)))
-                                            (.setOnMousePressed (ui-utils/event-handler
-                                                                    [mev]
-                                                                  (reset! *last-coord [(.getSceneX mev) (.getSceneY mev)])))
-                                            (.setOnMouseDragged (ui-utils/event-handler
-                                                                    [mev]
-                                                                  (let [curr-factor (.getX scale)
-                                                                        [last-x last-y] @*last-coord
-                                                                        curr-x (.getSceneX mev)
-                                                                        curr-y (.getSceneY mev)
-                                                                        delta-x (- curr-x last-x)
-                                                                        delta-y (- curr-y last-y)]
-                                                                    (reset! *last-coord [curr-x curr-y])
-                                                                    (.setHvalue scroll-pane (- (.getHvalue scroll-pane) (/ delta-x (.getWidth diagram-pane))))
-                                                                    (.setVvalue scroll-pane (- (.getVvalue scroll-pane) (/ delta-y (.getHeight diagram-pane))))))))
-
-                                          (.setContent scroll-pane diagram-pane))))))
-                     tools-box (ui/h-box :childs [(Label. "FlowId:") flow-id-txt refresh-btn])
+               (let [digram-outer-pane (ui/pane :childs [])
+                     set-diagram-pane (fn [p]
+                                        (.clear (.getChildren digram-outer-pane))
+                                        (.add (.getChildren digram-outer-pane) p))
+                     flow-id-txt (ui/text-field :initial-text "0")
+                     refresh-btn (ui/button :label "Refresh"
+                                            :on-click (fn []
+                                                        (let [flow-id (parse-long (.getText flow-id-txt))]
+                                                          (refresh-click flow-id {:on-new-diagram-pane set-diagram-pane}))))
+                     tools-box (ui/h-box :childs [(ui/label :text "FlowId:") flow-id-txt refresh-btn])
                      dw-pane (data-windows/data-window-pane {:data-window-id :plugins/cljs-compiler})
                      main-box (ui/border-pane
                                :top tools-box
                                :center (ui/split :orientation :horizontal
                                                  :sizes [0.7]
-                                                 :childs [scroll-pane
-                                                          dw-pane]))]
+                                                 :childs [digram-outer-pane dw-pane]))]
                  {:fx/node main-box}))})
