@@ -8,11 +8,11 @@
             [clj-tree-layout.core :refer [layout-tree]])
   (:import [javafx.scene.control Label Button TextField]
            [javafx.scene.paint Paint]
-           [javafx.scene.transform Scale Translate]
+           [javafx.scene.transform Scale Translate Rotate]
            [javafx.scene.layout HBox VBox]
-           [javafx.scene.shape Line Rectangle]
+           [javafx.scene.shape Line Rectangle Path MoveTo LineTo]
            [javafx.event EventHandler]
-           [javafx.scene Node]))
+           [javafx.scene Node Group]))
 
 (defn- graph->nested-tree
   ([{:keys [nodes edges] :as g}]
@@ -24,19 +24,28 @@
    (let [childs (mapv (fn [nid] (graph->nested-tree g (get nodes nid))) (get edges (:node-id node)))]
      (assoc node :childs childs))))
 
-(defn- labeled-container [& {:keys  [label x y width height]}]
-  (let [rect (doto (Rectangle. 0 0 width height)
-               (.setFill  (Paint/valueOf "#336699")))
+(defn- labeled-container [& {:keys  [label x y width height on-ret-click]}]
+  (let [ret-btn (ui/button :label "Return"
+                           :on-click on-ret-click)
         lbl (doto (ui/label :text label)
               (.setLayoutX 10)
-              (.setLayoutY 10))]
+              (.setLayoutY 10))
+        ret-btn-width 100
+        ret-btn-height 50]
+    (doto ret-btn
+      (.setLayoutX (+ (/ width 2) (- (/ ret-btn-width 2))))
+      (.setLayoutY height)
+      (.setPrefWidth 100)
+      (.setPrefHeight 50)
+      (.toFront))
     (doto (ui/pane
            :childs
-           [rect lbl])
+           [lbl ret-btn])
+      (.setStyle "-fx-background-color: #AAA")
       (.setLayoutX x)
       (.setLayoutY y)
       (.setPrefWidth width)
-      (.setPrefHeight height))))
+      (.setPrefHeight (+ height ret-btn-height 20)))))
 
 (defn- labeled-node [& {:keys  [label x y width height]}]
   (doto (ui/label :text label)
@@ -46,24 +55,70 @@
     (.setPrefHeight height)
     (.setStyle "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: pink;")))
 
+(defn clalc-line-angle
+  "Calculates the angle of the line passing through points (x1, y1) and (x2, y2).
+   The angle is returned in degrees, measured counterclockwise from the positive x-axis."
+  [[x1 y1] [x2 y2]]
+  (let [dx (- x2 x1)
+        dy (- y2 y1)
+        radians (Math/atan2 dy dx)
+        degrees (Math/toDegrees radians)]
+    (if (neg? degrees)
+      (+ degrees 360) ; Ensure the angle is in [0, 360) range
+      degrees)))
+
 (defn- arrow [& {:keys [from-x from-y to-x to-y on-click]}]
-  (doto (Line. from-x from-y to-x to-y)
-    (.setStyle "-fx-stroke-width: 5;")
-    (.setOnMouseClicked
-     (ui-utils/event-handler
-         [mev]
-       (on-click mev)))))
+  (let [line (doto (Line. from-x from-y to-x to-y)
+               (.toFront)
+               (.setPickOnBounds true)
+               (.setStyle "-fx-stroke-width: 5;")
+               (.setOnMouseClicked
+                (ui-utils/event-handler
+                    [mev]
+                  (on-click mev))))
+        head-path (doto (Path.)
+                    (.setStyle "-fx-stroke-width: 5;"))
+        trans (Translate. to-x to-y)
+        line-angle (clalc-line-angle [from-x from-y] [to-x to-y])
+        rot (Rotate. (+ line-angle 90))]
+    (doto (.getElements head-path)
+      (.add (MoveTo. 0 0))
+      (.add (LineTo. -10 20))
+      (.add (MoveTo. 0 0))
+      (.add (LineTo. 10 20)))
+
+    (-> head-path .getTransforms (.addAll [trans rot]))
+    (Group. (into-array Node [head-path line]))))
 
 (defn- build-analysis-pane [{:keys [nodes edges]} node-id->layout]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
                                (let [{:keys [x y width height]} (node-id->layout nid)
                                      node (nodes nid)
                                      fn-lbl (case (:type node)
-                                              :analysis "Analysis"
-                                              :parsing  "Parse")
+                                              :analysis "cljs.analyzer/analyze*"
+                                              :parsing  "cljs.analyzer/parse")
+                                     call-btn (ui/button :label "Call"
+                                                         :on-click (fn []
+                                                                     (let [{:keys [fn-args-ref]} node]
+                                                                       (runtime-api/data-window-push-val-data rt-api
+                                                                                                              :plugins/cljs-compiler
+                                                                                                              fn-args-ref
+                                                                                                              {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
+                                                                                                               :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnCall"
+                                                                                                               :root? true}))))
+                                     ret-btn (ui/button :label "Return"
+                                                        :on-click (fn []
+                                                                    (let [{:keys [ret-ref throwable-ref]} node]
+                                                                      (runtime-api/data-window-push-val-data rt-api
+                                                                                                             :plugins/cljs-compiler
+                                                                                                             (or ret-ref throwable-ref)
+                                                                                                             {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
+                                                                                                              :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnReturn"
+                                                                                                              :root? true}))))
                                      node-box (doto
                                                   (ui/v-box
-                                                   :childs [(ui/label :text fn-lbl)
+                                                   :childs [(ui/h-box :childs [(ui/label :text fn-lbl) call-btn ret-btn]
+                                                                      :spacing 10)
                                                             (ui/label :text (:form-prev node))])
                                                 (.setLayoutX x)
                                                 (.setLayoutY y)
@@ -81,42 +136,17 @@
                                           (let [node-from (node-id->layout node-id-from)
                                                 node-to (node-id->layout node-id-to)
                                                 arr-offset 50
-                                                call-from-x (+ (:x node-from) (/ (:width node-from) 2))
-                                                call-from-y (+ (:y node-from) (:height node-from))
-                                                call-to-x   (- (+ (:x node-to) (/ (:width node-to) 2)) arr-offset)
-                                                call-to-y   (:y node-to)
-
-                                                ret-from-x (+ (:x node-to) (/ (:width node-to) 2) arr-offset)
-                                                ret-from-y (:y node-to)
-                                                ret-to-x   (+ (:x node-from) (/ (:width node-from) 2))
-                                                ret-to-y   (+ (:y node-from) (:width node-from))
+                                                from-x (+ (:x node-from) (/ (:width node-from) 2))
+                                                from-y (+ (:y node-from) (:height node-from))
+                                                to-x   (+ (:x node-to) (/ (:width node-to) 2))
+                                                to-y   (:y node-to)
 
                                                 node (nodes node-id-from)
-                                                call-arr (arrow :from-x call-from-x
-                                                                :from-y call-from-y
-                                                                :to-x   call-to-x
-                                                                :to-y   call-to-y
-                                                                :on-click (fn [mev]
-                                                                            (let [{:keys [fn-args-ref]} (nodes node-id-to)]
-                                                                              (runtime-api/data-window-push-val-data rt-api
-                                                                                                                     :plugins/cljs-compiler
-                                                                                                                     fn-args-ref
-                                                                                                                     {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
-                                                                                                                      :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnCall"
-                                                                                                                      :root? true}))))
-                                                ret-arr (arrow :from-x ret-from-x
-                                                               :from-y ret-from-y
-                                                               :to-x   ret-to-x
-                                                               :to-y   ret-to-y
-                                                               :on-click (fn [mev]
-                                                                           (let [{:keys [ret-ref throwable-ref]} (nodes node-id-to)]
-                                                                              (runtime-api/data-window-push-val-data rt-api
-                                                                                                                     :plugins/cljs-compiler
-                                                                                                                     (or ret-ref throwable-ref)
-                                                                                                                     {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
-                                                                                                                      :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnReturn"
-                                                                                                                      :root? true}))))]
-                                            (into arrs [call-arr ret-arr])))
+                                                arr (arrow :from-x from-x
+                                                           :from-y from-y
+                                                           :to-x   to-x
+                                                           :to-y   to-y)]
+                                            (into arrs [arr])))
                                  arrows
                                  to-ids))
                           []
@@ -132,7 +162,18 @@
                                                               :x x
                                                               :y y
                                                               :width width
-                                                              :height height))))
+                                                              :height height
+                                                              :on-ret-click (fn []
+                                                                              (let [{:keys [entry]} node
+                                                                                    val-ref (case (:type entry)
+                                                                                              :fn-return (:result entry)
+                                                                                              :expr (:result entry))]
+                                                                                (runtime-api/data-window-push-val-data rt-api
+                                                                                                                       :plugins/cljs-compiler
+                                                                                                                       val-ref
+                                                                                                                       {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
+                                                                                                                        :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
+                                                                                                                        :root? true})))))))
                              []
                              nodes)
         arrows-vec (reduce-kv (fn [arrows node-id-from to-ids]
@@ -143,28 +184,16 @@
                                                 from-y (+ (:y layout-from) (:height layout-from))
                                                 to-x   (+ (:x layout-to) (/ (:width layout-to) 2))
                                                 to-y   (:y layout-to)
-                                                {:keys [entry]} (nodes node-id-from)
                                                 arr (arrow :from-x from-x
                                                            :from-y from-y
                                                            :to-x   to-x
-                                                           :to-y   to-y
-                                                           :on-click (fn [mev]
-                                                                       (prn "@@@@ clicked HL")
-                                                                       (let [val-ref (case (:type entry)
-                                                                                       :fn-return (:result entry)
-                                                                                       :expr (:result entry))]
-                                                                         (runtime-api/data-window-push-val-data rt-api
-                                                                                                                :plugins/cljs-compiler
-                                                                                                                val-ref
-                                                                                                                {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
-                                                                                                                 :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
-                                                                                                                 :root? true}))))]
+                                                           :to-y   to-y)]
                                             (conj arrs arr)))
                                  arrows
                                  to-ids))
                           []
                           edges)
-        nodes-and-arrows-vec (-> nodes-vec
+        nodes-and-arrows-vec (->> nodes-vec
                                 (into arrows-vec))]
     (ui/pane :childs nodes-and-arrows-vec)))
 
@@ -195,34 +224,35 @@
 (defn build-diagram-pane [{:keys [high-level-graph analysis-graph]}]
   (let [analysis-layout (layout-tree
                          (graph->nested-tree analysis-graph)
-                         {:sizes (zipmap (keys (:nodes analysis-graph)) (repeat [200 200]))
+                         {:sizes (zipmap (keys (:nodes analysis-graph)) (repeat [300 100]))
                           :branch-fn :childs
                           :childs-fn :childs
                           :id-fn :node-id
-                          :v-gap 200})
+                          :v-gap 200
+                          :h-gap 30})
         analysis-layout-size (layout-size analysis-layout)
         high-level-layout (layout-tree
                            (graph->nested-tree high-level-graph)
                            {:sizes {:read-ret          [200 80]
                                     :repl-wrapping-ret [200 80]
                                     :analysis-ret      [(:width analysis-layout-size) (:height analysis-layout-size)]
-                                    :emission-ret      [200 80]
-                                    :output            [200 80]}
+                                    :emission-ret      [200 80]}
                             :branch-fn :childs
                             :childs-fn :childs
                             :id-fn :node-id
-                            :v-gap 100})
+                            :v-gap 200})
         high-level-layout-size (layout-size high-level-layout)
         analysis-box-layout (:analysis-ret high-level-layout)
-        high-level-pane (build-high-level-pane high-level-graph high-level-layout)
-        analysis-pane (build-analysis-pane analysis-graph
-                                           (translate-layout [(:x analysis-box-layout)
-                                                              (:y analysis-box-layout)]
-                                                             analysis-layout))
+        high-level-pane (doto (build-high-level-pane high-level-graph high-level-layout)
+                          (.setPrefWidth (:width high-level-layout-size))
+                          (.setPrefHeight (:height high-level-layout-size)))
+        analysis-pane (doto (build-analysis-pane analysis-graph analysis-layout)
+                        (.setLayoutX (:x analysis-box-layout))
+                        (.setLayoutY (:y analysis-box-layout))
+                        (.setPrefWidth (:width analysis-layout-size))
+                        (.setPrefHeight (:height analysis-layout-size)))
 
-        dia-pane (doto (ui/pane :childs [high-level-pane analysis-pane])
-                   (.setPrefWidth (:width high-level-layout-size))
-                   (.setPrefHeight (:height high-level-layout-size)))]
+        dia-pane (ui/pane :childs [high-level-pane analysis-pane])]
     dia-pane))
 
 (defn- refresh-click [flow-id {:keys [on-new-diagram-pane]}]

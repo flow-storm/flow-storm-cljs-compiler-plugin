@@ -149,13 +149,11 @@
                                 :analysis-ret {:node-id :analysis-ret
                                                :entry analysis-ret}
                                 :emission-ret {:node-id :emission-ret
-                                               :entry emission-ret}
-                                :output {:node-id :output}}
+                                               :entry emission-ret}}
                         :edges {:read-ret [:repl-wrapping-ret]
                                 :repl-wrapping-ret [:analysis-ret]
                                 :analysis-ret [:emission-ret]
-                                :emission-ret [:output]
-                                :output []}} 
+                                :emission-ret []}} 
      :analysis-graph (extract-analysis-graph 0 27 (when exclude-repl-wrapping? read-form))}))
 
 
