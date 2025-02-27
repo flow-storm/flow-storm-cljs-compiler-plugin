@@ -101,7 +101,9 @@
                      (let [fn-call (ia/get-fn-call comp-timeline entry)]
                        (= "cljs.vendor.clojure.tools.reader" (ia/get-fn-ns fn-call))
                        (= "read" (ia/get-fn-name fn-call))))
-                (assoc hl-entries :read-ret (dbg-api/reference-timeline-entry! (ia/as-immutable entry)))
+                (assoc hl-entries
+                       :read-ret (dbg-api/reference-timeline-entry! (ia/as-immutable entry))
+                       :read-form (ia/get-expr-val entry))
 
                 ;; repl-wrapping-ret
                 (and (ia/expr-trace? entry)
@@ -131,9 +133,9 @@
            :emission-ret nil}
           comp-timeline))
 
-(defn extract-compilation-graphs [flow-id]
+(defn extract-compilation-graphs [flow-id {:keys [exclude-repl-wrapping?] :as opts}]
   (let [comp-timeline (get-compilation-timeline flow-id)
-        {:keys [read-ret repl-wrapping-ret analysis-ret emission-ret] :as hl-entries}
+        {:keys [read-ret repl-wrapping-ret analysis-ret emission-ret read-form] :as hl-entries}
         (find-high-level-entries comp-timeline)]
 
     (when-not (and read-ret repl-wrapping-ret analysis-ret emission-ret)
@@ -154,7 +156,7 @@
                                 :analysis-ret [:emission-ret]
                                 :emission-ret [:output]
                                 :output []}} 
-     :analysis-graph (extract-analysis-graph 0 27 nil)}))
+     :analysis-graph (extract-analysis-graph 0 27 (when exclude-repl-wrapping? read-form))}))
 
 
 

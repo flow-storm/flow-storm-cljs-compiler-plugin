@@ -63,7 +63,7 @@
                                               :parsing  "Parse")
                                      node-box (doto
                                                   (ui/v-box
-                                                   :childs [(ui/label :text "Analyzing")
+                                                   :childs [(ui/label :text fn-lbl)
                                                             (ui/label :text (:form-prev node))])
                                                 (.setLayoutX x)
                                                 (.setLayoutY y)
@@ -229,7 +229,8 @@
   (let [compilation-graphs
         (runtime-api/call-by-fn-key rt-api
                                     :plugins.cljs-compiler/extract-compilation-graphs
-                                    [flow-id])
+                                    [flow-id
+                                     {:exclude-repl-wrapping? true}])
 
         diagram-pane (build-diagram-pane compilation-graphs)
         translation (Translate. 0 0)
