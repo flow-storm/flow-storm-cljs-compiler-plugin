@@ -42,14 +42,6 @@
       (.setPrefWidth width)
       (.setPrefHeight (+ height ret-btn-height 20)))))
 
-#_(defn- labeled-node [& {:keys  [label x y width height]}]
-  (doto (ui/label :text label)
-    (.setLayoutX x)
-    (.setLayoutY y)
-    (.setPrefWidth width)
-    (.setPrefHeight height)
-    (.setStyle "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: pink;")))
-
 (defn clalc-line-angle
   "Calculates the angle of the line passing through points (x1, y1) and (x2, y2).
    The angle is returned in degrees, measured counterclockwise from the positive x-axis."
@@ -171,10 +163,12 @@
                                                               :width width
                                                               :height height
                                                               :on-ret-click (fn []
-                                                                              (let [{:keys [entry]} node
-                                                                                    val-ref (case (:type entry)
-                                                                                              :fn-return (:result entry)
-                                                                                              :expr (:result entry))]
+                                                                              (let [{:keys [data node-id]} node
+                                                                                    val-ref (case node-id
+                                                                                              :read-ret          (:result data)
+                                                                                              :repl-wrapping-ret (:result data)
+                                                                                              :analysis          (-> data :fn-return :result)
+                                                                                              :emission          (-> data :fn-return :result))]
                                                                                 (runtime-api/data-window-push-val-data rt-api
                                                                                                                        :plugins/cljs-compiler
                                                                                                                        val-ref
@@ -234,14 +228,14 @@
                            (graph->nested-tree high-level-graph)
                            {:sizes {:read-ret          [200 80]
                                     :repl-wrapping-ret [200 80]
-                                    :analysis-ret      [(:width analysis-layout-size) (:height analysis-layout-size)]
-                                    :emission-ret      [200 80]}
+                                    :analysis          [(:width analysis-layout-size) (:height analysis-layout-size)]
+                                    :emission          [200 80]}
                             :branch-fn :childs
                             :childs-fn :childs
                             :id-fn :node-id
                             :v-gap 200})
         high-level-layout-size (layout-size high-level-layout)
-        analysis-box-layout (:analysis-ret high-level-layout)
+        analysis-box-layout (:analysis high-level-layout)
         high-level-pane (doto (build-high-level-pane high-level-graph high-level-layout)
                           (.setPrefWidth (:width high-level-layout-size))
                           (.setPrefHeight (:height high-level-layout-size)))

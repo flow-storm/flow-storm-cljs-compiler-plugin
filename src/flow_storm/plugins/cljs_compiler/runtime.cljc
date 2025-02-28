@@ -133,8 +133,8 @@
   (def at (extract-analysis-graph 0 27 '(defn sum [a b] (+ a b))))
   (def at (extract-analysis-graph 0 27 nil)))
 
-(defn find-high-level-entries [comp-timeline]
-  (reduce (fn [hl-entries entry]
+(defn find-high-level-entries [comp-timeline {:keys [exclude-repl-wrapping?]}]
+  (reduce (fn [{:keys [read-form analysis emission] :as hl-entries} entry]
             (if (every? identity (vals hl-entries))
               (reduced hl-entries)
 
@@ -153,50 +153,54 @@
                      (= '(wrap form) (ia/get-sub-form comp-timeline entry)))
                 (assoc hl-entries :repl-wrapping-ret (dbg-api/reference-timeline-entry! (ia/as-immutable entry)))
 
-                ;; analysis-ret
-                (and (ia/expr-trace? entry)
-                     (= '(->ast form) (ia/get-sub-form comp-timeline entry))
-                     (let [fn-call (ia/get-fn-call comp-timeline entry)]
-                       (and (= "cljs.repl" (ia/get-fn-ns fn-call))
-                            (= "evaluate-form" (ia/get-fn-name fn-call)))))
-                (assoc hl-entries :analysis-ret (dbg-api/reference-timeline-entry! (ia/as-immutable entry)))
+                ;; analysis
+                (and (nil? analysis)
+                     (ia/fn-call-trace? entry)
+                     (= "cljs.analyzer" (ia/get-fn-ns entry))
+                     (= "analyze*" (ia/get-fn-name entry))
+                     (or exclude-repl-wrapping?
+                         (= read-form (get (ia/get-fn-args entry) 1))))
+                (let [fn-ret (get comp-timeline (ia/get-fn-ret-idx entry))]
+                  (assoc hl-entries :analysis {:fn-call   (dbg-api/reference-timeline-entry! (ia/as-immutable entry))
+                                               :fn-return (dbg-api/reference-timeline-entry! (ia/as-immutable fn-ret))}))
 
-                ;; emission-ret
-                (and (ia/expr-trace? entry)
-                     (= '(comp/emit-str ast) (ia/get-sub-form comp-timeline entry))
-                     (let [fn-call (ia/get-fn-call comp-timeline entry)]
-                       (and (= "cljs.repl" (ia/get-fn-ns fn-call))
-                            (= "evaluate-form" (ia/get-fn-name fn-call)))))
-                (assoc hl-entries :emission-ret (dbg-api/reference-timeline-entry! (ia/as-immutable entry)))
+                ;; emission
+                (and (nil? emission)
+                     (ia/fn-call-trace? entry)
+                     (= "cljs.compiler" (ia/get-fn-ns entry))
+                     (= "emit-str" (ia/get-fn-name entry)))
+                (let [fn-ret (get comp-timeline (ia/get-fn-ret-idx entry))]                  
+                  (assoc hl-entries :emission {:fn-call   (dbg-api/reference-timeline-entry! (ia/as-immutable entry))
+                                               :fn-return (dbg-api/reference-timeline-entry! (ia/as-immutable fn-ret))}))
                 
                 :else hl-entries)))
           {:read-ret nil
            :repl-wrapping-ret nil
-           :analysis-ret nil
-           :emission-ret nil}
+           :analysis nil
+           :emission nil}
           comp-timeline))
 
-(defn extract-compilation-graphs [flow-id {:keys [exclude-repl-wrapping?]}]
+(defn extract-compilation-graphs [flow-id {:keys [exclude-repl-wrapping?] :as opts}]
   (let [comp-timeline (get-compilation-timeline flow-id)
-        {:keys [read-ret repl-wrapping-ret analysis-ret emission-ret read-form] :as hl-entries}
-        (find-high-level-entries comp-timeline)]
+        {:keys [read-ret read-form repl-wrapping-ret analysis emission] :as hl-entries}
+        (find-high-level-entries comp-timeline opts)]
 
-    (when-not (and read-ret repl-wrapping-ret analysis-ret emission-ret)
+    (when-not (and read-ret repl-wrapping-ret analysis emission)
       (throw (ex-info "Couldn't find all high level entries" {:hl-entries hl-entries})))
     
     {:high-level-graph {:nodes {:read-ret {:node-id :read-ret
-                                           :entry read-ret
+                                           :data read-ret
                                            :root? true}
                                 :repl-wrapping-ret {:node-id :repl-wrapping-ret
-                                                    :entry repl-wrapping-ret}
-                                :analysis-ret {:node-id :analysis-ret
-                                               :entry analysis-ret}
-                                :emission-ret {:node-id :emission-ret
-                                               :entry emission-ret}}
+                                                    :data repl-wrapping-ret}
+                                :analysis {:node-id :analysis
+                                           :data analysis}
+                                :emission {:node-id :emission
+                                           :data emission}}
                         :edges {:read-ret [:repl-wrapping-ret]
-                                :repl-wrapping-ret [:analysis-ret]
-                                :analysis-ret [:emission-ret]
-                                :emission-ret []}} 
+                                :repl-wrapping-ret [:analysis]
+                                :analysis [:emission]
+                                :emission []}} 
      :analysis-graph (extract-analysis-graph 0 27 (when exclude-repl-wrapping? read-form))}))
 
 (dbg-api/register-api-function :plugins.cljs-compiler/extract-compilation-graphs extract-compilation-graphs)
