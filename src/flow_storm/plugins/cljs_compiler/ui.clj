@@ -9,11 +9,11 @@
            [javafx.scene.shape Line Path MoveTo LineTo]
            [javafx.scene Node Group]))
 
-(def read-ret-node-width 200)
-(def read-ret-node-height 80)
+(def read-ret-node-width 800)
+(def read-ret-node-height 200)
 
-(def repl-wrapping-ret-node-width 200)
-(def repl-wrapping-ret-node-height 80)
+(def repl-wrapping-ret-node-width 800)
+(def repl-wrapping-ret-node-height 200)
 
 (def analysis-nodes-width 300)
 (def analysis-nodes-height 150)
@@ -32,7 +32,7 @@
    (let [childs (mapv (fn [nid] (graph->nested-tree g (get nodes nid))) (get edges (:node-id node)))]
      (assoc node :childs childs))))
 
-(defn- labeled-container [& {:keys  [label x y width height on-ret-click]}]
+(defn- labeled-container [& {:keys  [label label-scale x y width height on-ret-click]}]
   (let [ret-btn (ui/button :label "Return"
                            :on-click on-ret-click)
         lbl (doto (ui/label :text label)
@@ -40,16 +40,19 @@
               (.setLayoutY 10))
         ret-btn-width 100
         ret-btn-height 50]
+
     (doto ret-btn
       (.setLayoutX (+ (/ width 2) (- (/ ret-btn-width 2))))
       (.setLayoutY height)
-      (.setPrefWidth 100)
-      (.setPrefHeight 50)
       (.toFront))
+
+    (-> lbl .getTransforms (.add label-scale))
+    (-> ret-btn .getTransforms (.add label-scale))
+
     (doto (ui/pane
            :childs
            [lbl ret-btn])
-      (.setStyle "-fx-background-color: #AAA")
+      (.setStyle "-fx-background-color: #2c569c")
       (.setLayoutX x)
       (.setLayoutY y)
       (.setPrefWidth width)
@@ -246,10 +249,15 @@
                                  (into arrows-vec))]
     (ui/pane :childs nodes-and-arrows-vec)))
 
-(defn- build-high-level-pane [{:keys [nodes edges]} node-id->layout]
+(defn- build-high-level-pane [{:keys [nodes edges]} node-id->layout {:keys [stages-labels-scale]}]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
                                (let [{:keys [x y width height]} (node-id->layout nid)]
-                                 (conj acc (labeled-container :label (name (:node-id node))
+                                 (conj acc (labeled-container :label (case nid
+                                                                       :read-ret          "Reader"
+                                                                       :repl-wrapping-ret "Wrapping"
+                                                                       :analysis          "Analysis"
+                                                                       :emission          "Emission")
+                                                              :label-scale stages-labels-scale
                                                               :x x
                                                               :y y
                                                               :width width
@@ -306,7 +314,7 @@
     {:width  (- max-x min-x)
      :height (- max-y min-y)}))
 
-(defn build-diagram-pane [{:keys [high-level-graph analysis-graph emission-graph]}]
+(defn build-diagram-pane [{:keys [high-level-graph analysis-graph emission-graph]} scales]
   (let [analysis-layout (layout-tree
                          (graph->nested-tree analysis-graph)
                          {:sizes (zipmap (keys (:nodes analysis-graph)) (repeat [analysis-nodes-width analysis-nodes-height]))
@@ -336,12 +344,12 @@
                             :branch-fn :childs
                             :childs-fn :childs
                             :id-fn :node-id
-                            :v-gap 200})
+                            :v-gap 500})
         high-level-layout-size (layout-size high-level-layout)
 
         analysis-box-layout (:analysis high-level-layout)
         emission-box-layout (:emission high-level-layout)
-        high-level-pane (doto (build-high-level-pane high-level-graph high-level-layout)
+        high-level-pane (doto (build-high-level-pane high-level-graph high-level-layout scales)
                           (.setPrefWidth (:width high-level-layout-size))
                           (.setPrefHeight (:height high-level-layout-size)))
 
@@ -360,6 +368,23 @@
         dia-pane (ui/pane :childs [high-level-pane analysis-pane emission-pane])]
     dia-pane))
 
+(defn clamp [x from to]
+  (-> x
+      (min to)
+      (max from)))
+
+(defn diagram-scale-interpolation [x]
+  ;; some grpahtoy.com fun
+  (clamp (* 0.5 (+ 1 (Math/sin (- (* x 3) 1.6))))
+         0.05
+         1))
+
+(defn stages-labels-scale-interpolation [x]
+  ;; some grpahtoy.com fun
+  (clamp (* 7 (+ 1 (Math/sin (+ (* x 3) 1.8))))
+         1
+         14))
+
 (defn- refresh-click [flow-id {:keys [on-new-diagram-pane]}]
   (let [compilation-graphs
         (runtime-api/call-by-fn-key rt-api
@@ -367,32 +392,42 @@
                                     [flow-id
                                      {:exclude-repl-wrapping? true}])
 
-        diagram-pane (build-diagram-pane compilation-graphs)
+        diagram-scale (Scale. 0.2 0.2)
+        stages-labels-scale (Scale. 1 1)
+        diagram-pane (build-diagram-pane compilation-graphs {:diagram-scale diagram-scale
+                                                             :stages-labels-scale stages-labels-scale})
         translation (Translate. 0 0)
-        scale (Scale. 1 1)
+        *zoom-perc (atom 0.5)
         *last-coord (atom [0 0])]
 
-    (-> diagram-pane .getTransforms (.addAll [scale translation]))
+    (-> diagram-pane .getTransforms (.addAll [diagram-scale translation]))
 
 
     (doto diagram-pane
       (.setOnScroll (ui-utils/event-handler
                         [sev]
-                      (let [delta-y (.getDeltaY sev)
-                            curr-factor (.getX scale)
-                            new-factor (cond
-                                         (pos? delta-y) (* curr-factor 1.1)
-                                         (neg? delta-y) (/ curr-factor 1.1)
-                                         :else          curr-factor)]
-                        (.setX scale new-factor)
-                        (.setY scale new-factor))
+                      (let [delta-y (.getDeltaY sev)]
+                        (swap! *zoom-perc (fn [zp]
+                                            (-> (cond
+                                                  (pos? delta-y) (+ zp 0.02)
+                                                  (neg? delta-y) (- zp 0.02)
+                                                  :else zp)
+                                                (min 1)
+                                                (max 0))))
+                        (let [zp @*zoom-perc
+                              new-dia-scale (diagram-scale-interpolation zp)
+                              new-stages-labels-scale (stages-labels-scale-interpolation zp)]
+                          (.setX diagram-scale new-dia-scale)
+                          (.setY diagram-scale new-dia-scale)
+                          (.setX stages-labels-scale new-stages-labels-scale)
+                          (.setY stages-labels-scale new-stages-labels-scale)))
                       (.consume sev)))
       (.setOnMousePressed (ui-utils/event-handler
                               [mev]
                             (reset! *last-coord [(.getSceneX mev) (.getSceneY mev)])))
       (.setOnMouseDragged (ui-utils/event-handler
                               [mev]
-                            (let [curr-scale (.getX scale)
+                            (let [curr-scale (.getX diagram-scale)
                                   curr-trans-x (.getX translation)
                                   curr-trans-y (.getY translation)
                                   [last-x last-y] @*last-coord
