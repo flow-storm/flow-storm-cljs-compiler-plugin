@@ -4,18 +4,13 @@
             [flow-storm.debugger.ui.components :as ui]
             [flow-storm.debugger.ui.utils :as ui-utils]
             [flow-storm.debugger.ui.data-windows.data-windows :as data-windows]
-            [clojure.string :as str]
             [clj-tree-layout.core :refer [layout-tree]])
-  (:import [javafx.scene.control Label Button TextField]
-           [javafx.scene.paint Paint]
-           [javafx.scene.transform Scale Translate Rotate]
-           [javafx.scene.layout HBox VBox]
-           [javafx.scene.shape Line Rectangle Path MoveTo LineTo]
-           [javafx.event EventHandler]
+  (:import [javafx.scene.transform Scale Translate Rotate]
+           [javafx.scene.shape Line Path MoveTo LineTo]
            [javafx.scene Node Group]))
 
 (defn- graph->nested-tree
-  ([{:keys [nodes edges] :as g}]
+  ([{:keys [nodes] :as g}]
    (let [root (some (fn [node] (when (:root? node) node))
                     (vals nodes))]
      (graph->nested-tree g root)))
@@ -109,7 +104,6 @@
 (defn- build-analysis-pane [{:keys [nodes edges]} node-id->layout]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
                                (let [{:keys [x y width height]} (node-id->layout nid)
-                                     node (nodes nid)
                                      call-btn (ui/button :label "Call"
                                                          :on-click (fn []
                                                                      (let [{:keys [fn-args-ref]} node]
@@ -150,13 +144,11 @@
                                 (reduce (fn [arrs node-id-to]
                                           (let [node-from (node-id->layout node-id-from)
                                                 node-to (node-id->layout node-id-to)
-                                                arr-offset 50
                                                 from-x (+ (:x node-from) (/ (:width node-from) 2))
                                                 from-y (+ (:y node-from) (:height node-from))
                                                 to-x   (+ (:x node-to) (/ (:width node-to) 2))
                                                 to-y   (:y node-to)
 
-                                                node (nodes node-id-from)
                                                 arr (arrow :from-x from-x
                                                            :from-y from-y
                                                            :to-x   to-x
@@ -227,14 +219,6 @@
                 (vals layout))]
     {:width  (- max-x min-x)
      :height (- max-y min-y)}))
-
-(defn- translate-layout [[x y] layout]
-  (reduce-kv (fn [acc nid lay]
-               (assoc acc nid (-> lay
-                                  (update :x #(+ x %))
-                                  (update :y #(+ y %)))))
-             {}
-             layout))
 
 (defn build-diagram-pane [{:keys [high-level-graph analysis-graph]}]
   (let [analysis-layout (layout-tree

@@ -34,10 +34,10 @@
 
 (get tl (ia/get-fn-parent-idx pres-fn-call))
 
-(defn extract-analysis-graph* [flow-id thread-id comp-timeline first-fn-call]
+(defn extract-analysis-graph* [thread-id comp-timeline first-fn-call]
   (let [from-idx (ia/entry-idx first-fn-call)
         to-idx (ia/get-fn-ret-idx first-fn-call)
-        step-fn (fn [{:keys [nodes edges parent-stack] :as acc} entry-idx]
+        step-fn (fn [{:keys [parent-stack] :as acc} entry-idx]
                   (if (empty? parent-stack)
                     (reduced acc)
                     
@@ -126,13 +126,12 @@
                                         entry))
                                     comp-timeline)]
     
-    (-> (extract-analysis-graph* flow-id thread-id comp-timeline  root-analysis-fn-call)
+    (-> (extract-analysis-graph* thread-id comp-timeline  root-analysis-fn-call)
         (select-keys [:nodes :edges]))))
 
 (comment
   (def at (extract-analysis-graph 0 27 '(defn sum [a b] (+ a b))))
-  (def at (extract-analysis-graph 0 27 nil))
-  (graph->nested-tree at))
+  (def at (extract-analysis-graph 0 27 nil)))
 
 (defn find-high-level-entries [comp-timeline]
   (reduce (fn [hl-entries entry]
@@ -143,8 +142,8 @@
                 ;; read-ret
                 (and (ia/fn-return-trace? entry)
                      (let [fn-call (ia/get-fn-call comp-timeline entry)]
-                       (= "cljs.vendor.clojure.tools.reader" (ia/get-fn-ns fn-call))
-                       (= "read" (ia/get-fn-name fn-call))))
+                       (and (= "cljs.vendor.clojure.tools.reader" (ia/get-fn-ns fn-call))
+                            (= "read" (ia/get-fn-name fn-call)))))
                 (assoc hl-entries
                        :read-ret (dbg-api/reference-timeline-entry! (ia/as-immutable entry))
                        :read-form (ia/get-expr-val entry))
@@ -158,16 +157,16 @@
                 (and (ia/expr-trace? entry)
                      (= '(->ast form) (ia/get-sub-form comp-timeline entry))
                      (let [fn-call (ia/get-fn-call comp-timeline entry)]
-                       (= "cljs.repl" (ia/get-fn-ns fn-call))
-                       (= "evaluate-form" (ia/get-fn-name fn-call))))
+                       (and (= "cljs.repl" (ia/get-fn-ns fn-call))
+                            (= "evaluate-form" (ia/get-fn-name fn-call)))))
                 (assoc hl-entries :analysis-ret (dbg-api/reference-timeline-entry! (ia/as-immutable entry)))
 
                 ;; emission-ret
                 (and (ia/expr-trace? entry)
                      (= '(comp/emit-str ast) (ia/get-sub-form comp-timeline entry))
                      (let [fn-call (ia/get-fn-call comp-timeline entry)]
-                       (= "cljs.repl" (ia/get-fn-ns fn-call))
-                       (= "evaluate-form" (ia/get-fn-name fn-call))))
+                       (and (= "cljs.repl" (ia/get-fn-ns fn-call))
+                            (= "evaluate-form" (ia/get-fn-name fn-call)))))
                 (assoc hl-entries :emission-ret (dbg-api/reference-timeline-entry! (ia/as-immutable entry)))
                 
                 :else hl-entries)))
@@ -177,7 +176,7 @@
            :emission-ret nil}
           comp-timeline))
 
-(defn extract-compilation-graphs [flow-id {:keys [exclude-repl-wrapping?] :as opts}]
+(defn extract-compilation-graphs [flow-id {:keys [exclude-repl-wrapping?]}]
   (let [comp-timeline (get-compilation-timeline flow-id)
         {:keys [read-ret repl-wrapping-ret analysis-ret emission-ret read-form] :as hl-entries}
         (find-high-level-entries comp-timeline)]
@@ -200,34 +199,8 @@
                                 :emission-ret []}} 
      :analysis-graph (extract-analysis-graph 0 27 (when exclude-repl-wrapping? read-form))}))
 
+(dbg-api/register-api-function :plugins.cljs-compiler/extract-compilation-graphs extract-compilation-graphs)
 
-(defn- graph->nested-tree
-  ([{:keys [nodes edges] :as g}]
-   (let [root (some (fn [node] (when (:root? node) node))
-                    (vals nodes))]
-     (graph->nested-tree g root)))
-
-  ([{:keys [nodes edges] :as g} node]
-   (let [childs (mapv (fn [nid] (graph->nested-tree g (get nodes nid))) (get edges (:node-id node)))]
-     (assoc node :childs childs))))
 
 (comment
-(graph->nested-tree at)
-  (require '[clj-tree-layout.core :refer [layout-tree]])
-
-  (reduce (fn [edges {:keys [node-id childs]}]
-            (into edges (mapv (fn [c] [node-id (:node-id c)]) childs)))
-          []
-          (tree-seq :childs :childs outer-tree))
-  
-  (def outer-tree (:outer-tree (extract-compilation-tree 0)))
-(nodes-by-id outer-tree)  
-  (layout-tree
-   outer-tree
-   {:sizes (zipmap (mapv :node-id (tree-seq :childs :childs outer-tree))
-                   (repeat [100 100]))
-    :branch-fn :childs
-    :childs-fn :childs
-    :id-fn :node-id})
   )
-(dbg-api/register-api-function :plugins.cljs-compiler/extract-compilation-graphs extract-compilation-graphs)
