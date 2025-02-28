@@ -28,15 +28,13 @@
               (ia/get-bind-val b)))
           binds)))
 
-(def tl (ia/get-timeline 0 27))
-(def pres (get tl 41950))
-(def pres-fn-call (ia/get-fn-call tl pres))
-(get-binding-val pres-fn-call "pass")
+(def oexpr (get (ia/get-timeline 0 27) 41997))
 
-(get tl (ia/get-fn-parent-idx pres-fn-call))
+(ia/get-fn-call (ia/get-timeline 0 27) oexpr)
 
-(defn extract-analysis-graph* [comp-timeline first-fn-call]
-  (let [from-idx (ia/entry-idx first-fn-call)
+(defn extract-analysis-graph [comp-timeline root-analyze*-fn-call-idx]
+  (let [first-fn-call (get comp-timeline root-analyze*-fn-call-idx)
+        from-idx (ia/entry-idx first-fn-call)
         to-idx (ia/get-fn-ret-idx first-fn-call)
         step-fn (fn [{:keys [parent-stack] :as acc} entry-idx]
                   (if (empty? parent-stack)
@@ -107,19 +105,67 @@
 
                         :else
                         acc))))]
-    (reduce step-fn
-            {:parent-stack (list from-idx)
-             :nodes {}
-             :edges {}}
-            (range from-idx (inc to-idx)))))
+    (select-keys
+     (reduce step-fn
+             {:parent-stack (list from-idx)
+              :nodes {}
+              :edges {}}
+             (range from-idx (inc to-idx)))
+     [:nodes :edges])))
 
-(defn extract-analysis-graph [comp-timeline root-analyze*-fn-call-idx]
-  (-> (extract-analysis-graph* comp-timeline (get comp-timeline root-analyze*-fn-call-idx))
-      (select-keys [:nodes :edges])))
+(defn extract-emission-graph [comp-timeline root-emit-str-fn-call-idx]
+  (let [first-fn-call (get comp-timeline root-emit-str-fn-call-idx)
+        from-idx (ia/entry-idx first-fn-call)
+        to-idx (ia/get-fn-ret-idx first-fn-call)
+        step-fn (fn [{:keys [parent-stack] :as acc} entry-idx]
+                  (if (empty? parent-stack)
+                    (reduced acc)
+                    
+                    (let [entry (get comp-timeline entry-idx)
+                          node-id (node-id entry)]
 
-(comment
-  (def at (extract-analysis-graph 0 27 '(defn sum [a b] (+ a b))))
-  (def at (extract-analysis-graph 0 27 nil)))
+                      (cond                      
+                        (and (ia/fn-call-trace? entry)
+                             (= "cljs.compiler" (ia/get-fn-ns entry))
+                             (= "emit" (ia/get-fn-name entry)))
+                        (-> acc
+                            (assoc-in [:nodes node-id] {:type :emission
+                                                        :node-id node-id
+                                                        :idx entry-idx
+                                                        :ast-op (-> (ia/get-fn-args entry) first :op)
+                                                        :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))})
+                            (update :parent-stack conj node-id)
+                            (update-in [:edges (first parent-stack)] conj node-id))
+
+                        (and (ia/expr-trace? entry)
+                             (= '*out* (ia/get-sub-form comp-timeline entry))
+                             (let [fn-call (ia/get-fn-call comp-timeline entry)]
+                               (and (= "cljs.compiler" (ia/get-fn-ns fn-call))
+                                    (= "emits" (ia/get-fn-name fn-call)))))
+                        (let [out-s (ia/get-expr-val (get comp-timeline (inc entry-idx)))
+                              write-out-node-id (first parent-stack)]
+                          (update-in acc [:nodes write-out-node-id :write-outs] (fnil conj []) {:write-out out-s
+                                                                                                :idx entry-idx}))
+                        
+                        (and (ia/fn-end-trace? entry)
+                             (= (ia/fn-call-idx entry) (first parent-stack)))
+                        (update acc :parent-stack pop)
+
+                        :else
+                        acc))))]
+    (select-keys
+     (reduce step-fn
+             {:parent-stack (list from-idx)
+              :nodes {root-emit-str-fn-call-idx {:type :emission
+                                                 :root? true
+                                                 :node-id root-emit-str-fn-call-idx
+                                                 :idx root-emit-str-fn-call-idx
+                                                 :fn-args-ref (rt-values/reference-value! (ia/get-fn-args first-fn-call))}}
+              :edges {}}
+             (range from-idx (inc to-idx)))
+     [:nodes :edges])))
+
+
 
 (defn find-high-level-entries [comp-timeline {:keys [exclude-repl-wrapping?]}]
   (reduce (fn [{:keys [read-form analysis emission] :as hl-entries} entry]
@@ -190,10 +236,12 @@
                                 :repl-wrapping-ret [:analysis]
                                 :analysis [:emission]
                                 :emission []}} 
-     :analysis-graph (extract-analysis-graph comp-timeline (-> analysis :fn-call :idx))}))
+     :analysis-graph (extract-analysis-graph comp-timeline (-> analysis :fn-call :idx))
+     :emission-graph (extract-emission-graph comp-timeline (-> emission :fn-call :idx))}))
 
 (dbg-api/register-api-function :plugins.cljs-compiler/extract-compilation-graphs extract-compilation-graphs)
 
 
 (comment
+  (extract-compilation-graphs 0 nil)
   )

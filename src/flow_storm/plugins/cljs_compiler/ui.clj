@@ -9,6 +9,19 @@
            [javafx.scene.shape Line Path MoveTo LineTo]
            [javafx.scene Node Group]))
 
+(def read-ret-node-width 200)
+(def read-ret-node-height 80)
+
+(def repl-wrapping-ret-node-width 200)
+(def repl-wrapping-ret-node-height 80)
+
+(def analysis-nodes-width 300)
+(def analysis-nodes-height 150)
+
+(def emission-nodes-width 300)
+(def emission-nodes-height 250)
+
+
 (defn- graph->nested-tree
   ([{:keys [nodes] :as g}]
    (let [root (some (fn [node] (when (:root? node) node))
@@ -83,15 +96,23 @@
             (ui/label :text form-prev)]))
 
 (defn- build-analysis-node [{:keys [form-prev passes]}]
-  (let [passes-box (ui/v-box :childs (mapv (fn [{:keys [pass-name idx]}]
-                                             (ui/label :text pass-name))
-                                           passes))]
+  (let [{:keys [add-all list-view-pane]} (ui/list-view :editable? false
+                                                       :cell-factory (fn [list-cell {:keys [pass-name idx]}]
+                                                                       (-> list-cell
+                                                                           (ui-utils/set-text nil)
+                                                                           (ui-utils/set-graphic (ui/label :text pass-name))))
+                                                       :on-click (fn [mev sel-items _]
+                                                                   (when (ui-utils/double-click? mev)
+                                                                     (let [pass (first sel-items)]
+                                                                       (prn "@@@@@ jumping to " pass))))
+                                                       :selection-mode :single)]
+    (add-all passes)
     (ui/v-box
      :childs [(ui/h-box :childs [(ui/label :text "cljs.analyzer/analyze*")]
                         :spacing 10)
               (ui/label :text form-prev)
               (ui/label :text "Passes:")
-              passes-box])))
+              list-view-pane])))
 
 (defn- build-analysis-pane [{:keys [nodes edges]} node-id->layout]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
@@ -102,7 +123,7 @@
                                                                        (runtime-api/data-window-push-val-data rt-api
                                                                                                               :plugins/cljs-compiler
                                                                                                               fn-args-ref
-                                                                                                              {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
+                                                                                                              {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
                                                                                                                :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnCall"
                                                                                                                :root? true}))))
                                      ret-btn (ui/button :label "Return"
@@ -111,7 +132,7 @@
                                                                       (runtime-api/data-window-push-val-data rt-api
                                                                                                              :plugins/cljs-compiler
                                                                                                              (or ret-ref throwable-ref)
-                                                                                                             {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
+                                                                                                             {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
                                                                                                               :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnReturn"
                                                                                                               :root? true}))))
                                      node-box (doto
@@ -125,6 +146,8 @@
                                                 (.setLayoutY y)
                                                 (.setPrefWidth width)
                                                 (.setPrefHeight height)
+                                                (.setMaxWidth analysis-nodes-width)
+                                                (.setMaxHeight analysis-nodes-height)
                                                 (.setStyle (case (:type node)
                                                              :analysis "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: #a31c32;"
                                                              :parsing  "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: #7a3e16;")))]
@@ -154,6 +177,75 @@
                                 (into arrows-vec))]
     (ui/pane :childs nodes-and-arrows-vec)))
 
+(defn- build-emission-node [{:keys [ast-op fn-args-ref write-outs]}]
+  (let [{:keys [add-all list-view-pane]} (ui/list-view :editable? false
+                                                       :cell-factory (fn [list-cell {:keys [write-out idx]}]
+                                                                       (-> list-cell
+                                                                           (ui-utils/set-text nil)
+                                                                           (ui-utils/set-graphic (ui/label :text write-out))))
+                                                       :on-click (fn [mev sel-items _]
+                                                                   (when (ui-utils/double-click? mev)
+                                                                     (let [write-out (first sel-items)]
+                                                                       (prn "@@@@@ jumping to " write-out))))
+                                                       :selection-mode :single)
+
+        call-btn (ui/button :label "Call"
+                            :on-click (fn []
+                                        (runtime-api/data-window-push-val-data rt-api
+                                                                               :plugins/cljs-compiler
+                                                                               fn-args-ref
+                                                                               {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
+                                                                                :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnCall"
+                                                                                :root? true})))]
+    (add-all write-outs)
+    (ui/v-box
+     :childs [(ui/label :text "cljs.compiler/emit")
+              call-btn
+              (ui/label :text (str "Ast OP: " (pr-str ast-op)))
+              (ui/label :text "Write outs:")
+              list-view-pane])))
+
+(defn- build-emission-pane [{:keys [nodes edges]} node-id->layout]
+  (let [nodes-vec (reduce-kv (fn [acc nid node]
+                               (let [{:keys [x y width height]} (node-id->layout nid)
+                                     node-box (case (:type node)
+                                                :emission (build-emission-node node))
+                                     node-box (doto node-box
+
+                                                (.setLayoutX x)
+                                                (.setLayoutY y)
+                                                (.setPrefWidth width)
+                                                (.setPrefHeight height)
+                                                (.setMaxWidth emission-nodes-width)
+                                                (.setMaxHeight emission-nodes-height)
+                                                (.setStyle (case (:type node)
+                                                             :emission "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: #a31c32;")))]
+
+                                 (conj acc node-box)))
+                             []
+                             nodes)
+        arrows-vec (reduce-kv (fn [arrows node-id-from to-ids]
+                                (reduce (fn [arrs node-id-to]
+                                          (let [node-from (node-id->layout node-id-from)
+                                                node-to (node-id->layout node-id-to)
+                                                from-x (+ (:x node-from) (/ (:width node-from) 2))
+                                                from-y (+ (:y node-from) (:height node-from))
+                                                to-x   (+ (:x node-to) (/ (:width node-to) 2))
+                                                to-y   (:y node-to)
+
+                                                arr (arrow :from-x from-x
+                                                           :from-y from-y
+                                                           :to-x   to-x
+                                                           :to-y   to-y)]
+                                            (into arrs [arr])))
+                                        arrows
+                                        to-ids))
+                              []
+                              edges)
+        nodes-and-arrows-vec (-> nodes-vec
+                                 (into arrows-vec))]
+    (ui/pane :childs nodes-and-arrows-vec)))
+
 (defn- build-high-level-pane [{:keys [nodes edges]} node-id->layout]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
                                (let [{:keys [x y width height]} (node-id->layout nid)]
@@ -172,7 +264,7 @@
                                                                                 (runtime-api/data-window-push-val-data rt-api
                                                                                                                        :plugins/cljs-compiler
                                                                                                                        val-ref
-                                                                                                                       {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins.cljs-compiler/extract-compilation-tree
+                                                                                                                       {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
                                                                                                                         :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
                                                                                                                         :root? true})))))))
                              []
@@ -214,38 +306,58 @@
     {:width  (- max-x min-x)
      :height (- max-y min-y)}))
 
-(defn build-diagram-pane [{:keys [high-level-graph analysis-graph]}]
+(defn build-diagram-pane [{:keys [high-level-graph analysis-graph emission-graph]}]
   (let [analysis-layout (layout-tree
                          (graph->nested-tree analysis-graph)
-                         {:sizes (zipmap (keys (:nodes analysis-graph)) (repeat [300 100]))
+                         {:sizes (zipmap (keys (:nodes analysis-graph)) (repeat [analysis-nodes-width analysis-nodes-height]))
                           :branch-fn :childs
                           :childs-fn :childs
                           :id-fn :node-id
                           :v-gap 200
                           :h-gap 30})
         analysis-layout-size (layout-size analysis-layout)
+
+        emission-layout (layout-tree
+                         (graph->nested-tree emission-graph)
+                         {:sizes (zipmap (keys (:nodes emission-graph)) (repeat [emission-nodes-width emission-nodes-height]))
+                          :branch-fn :childs
+                          :childs-fn :childs
+                          :id-fn :node-id
+                          :v-gap 200
+                          :h-gap 30})
+        emission-layout-size (layout-size emission-layout)
+
         high-level-layout (layout-tree
                            (graph->nested-tree high-level-graph)
-                           {:sizes {:read-ret          [200 80]
-                                    :repl-wrapping-ret [200 80]
+                           {:sizes {:read-ret          [read-ret-node-width read-ret-node-height]
+                                    :repl-wrapping-ret [repl-wrapping-ret-node-width repl-wrapping-ret-node-height]
                                     :analysis          [(:width analysis-layout-size) (:height analysis-layout-size)]
-                                    :emission          [200 80]}
+                                    :emission          [(:width emission-layout-size) (:height emission-layout-size)]}
                             :branch-fn :childs
                             :childs-fn :childs
                             :id-fn :node-id
                             :v-gap 200})
         high-level-layout-size (layout-size high-level-layout)
+
         analysis-box-layout (:analysis high-level-layout)
+        emission-box-layout (:emission high-level-layout)
         high-level-pane (doto (build-high-level-pane high-level-graph high-level-layout)
                           (.setPrefWidth (:width high-level-layout-size))
                           (.setPrefHeight (:height high-level-layout-size)))
+
         analysis-pane (doto (build-analysis-pane analysis-graph analysis-layout)
                         (.setLayoutX (:x analysis-box-layout))
                         (.setLayoutY (:y analysis-box-layout))
                         (.setPrefWidth (:width analysis-layout-size))
                         (.setPrefHeight (:height analysis-layout-size)))
 
-        dia-pane (ui/pane :childs [high-level-pane analysis-pane])]
+        emission-pane (doto (build-emission-pane emission-graph emission-layout)
+                        (.setLayoutX (:x emission-box-layout))
+                        (.setLayoutY (:y emission-box-layout))
+                        (.setPrefWidth (:width emission-layout-size))
+                        (.setPrefHeight (:height emission-layout-size)))
+
+        dia-pane (ui/pane :childs [high-level-pane analysis-pane emission-pane])]
     dia-pane))
 
 (defn- refresh-click [flow-id {:keys [on-new-diagram-pane]}]
