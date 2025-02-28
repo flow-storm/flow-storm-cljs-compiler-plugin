@@ -47,7 +47,7 @@
       (.setPrefWidth width)
       (.setPrefHeight (+ height ret-btn-height 20)))))
 
-(defn- labeled-node [& {:keys  [label x y width height]}]
+#_(defn- labeled-node [& {:keys  [label x y width height]}]
   (doto (ui/label :text label)
     (.setLayoutX x)
     (.setLayoutY y)
@@ -90,13 +90,26 @@
     (-> head-path .getTransforms (.addAll [trans rot]))
     (Group. (into-array Node [head-path line]))))
 
+(defn- build-parse-node [{:keys [form-prev]}]
+  (ui/v-box
+   :childs [(ui/label :text "cljs.analyzer/parse")
+            (ui/label :text form-prev)]))
+
+(defn- build-analysis-node [{:keys [form-prev passes]}]
+  (let [passes-box (ui/v-box :childs (mapv (fn [{:keys [pass-name idx]}]
+                                             (ui/label :text pass-name))
+                                           passes))]
+    (ui/v-box
+     :childs [(ui/h-box :childs [(ui/label :text "cljs.analyzer/analyze*")]
+                        :spacing 10)
+              (ui/label :text form-prev)
+              (ui/label :text "Passes:")
+              passes-box])))
+
 (defn- build-analysis-pane [{:keys [nodes edges]} node-id->layout]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
                                (let [{:keys [x y width height]} (node-id->layout nid)
                                      node (nodes nid)
-                                     fn-lbl (case (:type node)
-                                              :analysis "cljs.analyzer/analyze*"
-                                              :parsing  "cljs.analyzer/parse")
                                      call-btn (ui/button :label "Call"
                                                          :on-click (fn []
                                                                      (let [{:keys [fn-args-ref]} node]
@@ -117,9 +130,11 @@
                                                                                                               :root? true}))))
                                      node-box (doto
                                                   (ui/v-box
-                                                   :childs [(ui/h-box :childs [(ui/label :text fn-lbl) call-btn ret-btn]
-                                                                      :spacing 10)
-                                                            (ui/label :text (:form-prev node))])
+                                                   :childs [(case (:type node)
+                                                              :analysis (build-analysis-node node)
+                                                              :parsing  (build-parse-node node))
+                                                            (ui/h-box :childs [call-btn ret-btn]
+                                                                      :spacing 10)])
                                                 (.setLayoutX x)
                                                 (.setLayoutY y)
                                                 (.setPrefWidth width)

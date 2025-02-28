@@ -20,52 +20,99 @@
 (defn node-id [entry]
   (ia/entry-idx entry))
 
-(defn extract-analysis-graph* [flow-id thread-id comp-timeline *nodes *edges entry parent-node-id]
-  (when entry
-    (let [node-id (node-id entry)
-          interesting-node (cond
-                             
-                             (and (ia/fn-call-trace? entry)
-                                  (= "cljs.analyzer" (ia/get-fn-ns entry))
-                                  (= "analyze*" (ia/get-fn-name entry)))
-                             {:type :analysis
-                              :root? (nil? parent-node-id)
-                              :node-id node-id
-                              :thread-id thread-id
-                              :idx (ia/entry-idx entry)
-                              :form-prev (pr-str (get (ia/get-fn-args entry) 1))
-                              :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))}
+(defn- get-binding-val [fn-call symb-name]
+  (let [binds (ia/get-fn-bindings fn-call)]
+    (some (fn [b]
+            (when (= symb-name (ia/get-bind-sym-name b))
+              (ia/get-bind-val b)))
+          binds)))
 
-                             (and (ia/fn-call-trace? entry)
-                                  (= "cljs.analyzer" (ia/get-fn-ns entry))
-                                  (= "parse" (ia/get-fn-name entry)))
-                             {:type :parsing
-                              :node-id node-id
-                              :thread-id thread-id
-                              :idx (ia/entry-idx entry)
-                              :form-prev (pr-str (get (ia/get-fn-args entry) 2))
-                              :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))}
+(def tl (ia/get-timeline 0 27))
+(def pres (get tl 41950))
+(def pres-fn-call (ia/get-fn-call tl pres))
+(get-binding-val pres-fn-call "pass")
 
-                             :else
-                             nil)
-          
-          interesting-node (when interesting-node
-                             (let [fn-end (get comp-timeline (ia/get-fn-ret-idx entry))]
-                               (cond
-                                 (ia/fn-return-trace? fn-end)
-                                 (assoc interesting-node :ret-ref (rt-values/reference-value! (ia/get-expr-val fn-end)))
+(get tl (ia/get-fn-parent-idx pres-fn-call))
 
-                                 (ia/fn-unwind-trace? fn-end)
-                                 (assoc interesting-node :throwable-ref (rt-values/reference-value! (ia/get-throwable fn-end))))))]
-      (when interesting-node
-        (swap! *nodes assoc node-id interesting-node)
-        (when parent-node-id
-          (swap! *edges (fn [edgs] (update edgs parent-node-id conj node-id)))))
-      
-      (doseq [[_ _ cidx] (ia/callstack-node-childs flow-id thread-id (ia/entry-idx entry))]
-        (let [child-entry (get comp-timeline cidx)]
-          (extract-analysis-graph* flow-id thread-id comp-timeline *nodes *edges child-entry (or (:node-id interesting-node)
-                                                                                                parent-node-id)))))))
+(defn extract-analysis-graph* [flow-id thread-id comp-timeline first-fn-call]
+  (let [from-idx (ia/entry-idx first-fn-call)
+        to-idx (ia/get-fn-ret-idx first-fn-call)
+        step-fn (fn [{:keys [nodes edges parent-stack] :as acc} entry-idx]
+                  (if (empty? parent-stack)
+                    (reduced acc)
+                    
+                    (let [entry (get comp-timeline entry-idx)
+                          node-id (node-id entry)
+                          root? (= 1 (count parent-stack))
+                          interesting-node (cond
+                                             
+                                             (and (ia/fn-call-trace? entry)
+                                                  (= "cljs.analyzer" (ia/get-fn-ns entry))
+                                                  (= "analyze*" (ia/get-fn-name entry)))
+                                             {:type :analysis
+                                              :root? root?
+                                              :node-id node-id
+                                              :thread-id thread-id
+                                              :idx entry-idx
+                                              :form-prev (pr-str (get (ia/get-fn-args entry) 1))
+                                              :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))}
+
+                                             (and (ia/fn-call-trace? entry)
+                                                  (= "cljs.analyzer" (ia/get-fn-ns entry))
+                                                  (= "parse" (ia/get-fn-name entry)))
+                                             {:type :parsing
+                                              :node-id node-id
+                                              :thread-id thread-id
+                                              :idx entry-idx
+                                              :form-prev (pr-str (get (ia/get-fn-args entry) 2))
+                                              :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))}
+                                             
+                                             :else
+                                             nil)
+                          
+                          interesting-node (when interesting-node
+                                             (let [fn-end (get comp-timeline (ia/get-fn-ret-idx entry))]
+                                               (cond
+                                                 (ia/fn-return-trace? fn-end)
+                                                 (assoc interesting-node :ret-ref (rt-values/reference-value! (ia/get-expr-val fn-end)))
+
+                                                 (ia/fn-unwind-trace? fn-end)
+                                                 (assoc interesting-node :throwable-ref (rt-values/reference-value! (ia/get-throwable fn-end))))))
+                          [node-id-pass pass-data] (when (and (ia/expr-trace? entry)
+                                                              (= '(pass env ast opts) (ia/get-sub-form comp-timeline entry)))
+                                                     (let [pass-res-val (ia/get-expr-val entry)
+                                                           pass-wrap-anon-fn (ia/get-fn-call comp-timeline entry)
+                                                           ast-bind-val (get-binding-val pass-wrap-anon-fn "ast")
+                                                           pass-bind-val (get-binding-val pass-wrap-anon-fn "pass")]
+                                                       (when (not (identical? pass-res-val ast-bind-val))
+                                                         ;; it means that the pass applied
+                                                         (let [analyze*-node-id (ia/get-fn-parent-idx pass-wrap-anon-fn)]
+                                                           ;; parent-fn-call should be the  wrapping analyze* for the passes,
+                                                           ;; so its idx is its node-id
+                                                           [analyze*-node-id {:pass-name (pr-str pass-bind-val)
+                                                                              :idx entry-idx}]))))]
+
+                      (cond                      
+                        interesting-node
+                        (cond-> acc
+                          true        (assoc-in [:nodes node-id] interesting-node)
+                          true        (update :parent-stack conj node-id)
+                          (not root?) (update-in [:edges (first parent-stack)] conj node-id))
+
+                        pass-data
+                        (update-in acc [:nodes node-id-pass :passes] (fnil conj []) pass-data)
+                        
+                        (and (ia/fn-end-trace? entry)
+                             (= (ia/fn-call-idx entry) (first parent-stack)))
+                        (update acc :parent-stack pop)
+
+                        :else
+                        acc))))]
+    (reduce step-fn
+            {:parent-stack (list from-idx)
+             :nodes {}
+             :edges {}}
+            (range from-idx (inc to-idx)))))
 
 (defn extract-analysis-graph [flow-id thread-id from-form]
   (let [comp-timeline (ia/get-timeline flow-id thread-id)
@@ -77,13 +124,10 @@
                                                    (= from-form (get (ia/get-fn-args entry) 1))
                                                    true))
                                         entry))
-                                    comp-timeline)
-        *nodes (atom {})
-        *edges (atom {})]
+                                    comp-timeline)]
     
-    (extract-analysis-graph* flow-id thread-id comp-timeline *nodes *edges root-analysis-fn-call nil)
-    {:nodes @*nodes
-     :edges @*edges}))
+    (-> (extract-analysis-graph* flow-id thread-id comp-timeline  root-analysis-fn-call)
+        (select-keys [:nodes :edges]))))
 
 (comment
   (def at (extract-analysis-graph 0 27 '(defn sum [a b] (+ a b))))
@@ -157,10 +201,18 @@
      :analysis-graph (extract-analysis-graph 0 27 (when exclude-repl-wrapping? read-form))}))
 
 
+(defn- graph->nested-tree
+  ([{:keys [nodes edges] :as g}]
+   (let [root (some (fn [node] (when (:root? node) node))
+                    (vals nodes))]
+     (graph->nested-tree g root)))
 
+  ([{:keys [nodes edges] :as g} node]
+   (let [childs (mapv (fn [nid] (graph->nested-tree g (get nodes nid))) (get edges (:node-id node)))]
+     (assoc node :childs childs))))
 
 (comment
-
+(graph->nested-tree at)
   (require '[clj-tree-layout.core :refer [layout-tree]])
 
   (reduce (fn [edges {:keys [node-id childs]}]
