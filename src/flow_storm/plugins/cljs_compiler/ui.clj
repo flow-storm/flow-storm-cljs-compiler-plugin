@@ -228,8 +228,13 @@
                                                 (.setPrefHeight height)
                                                 (.setMaxWidth emission-nodes-width)
                                                 (.setMaxHeight emission-nodes-height)
-                                                (.setStyle (case (:type node)
-                                                             :emission "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: #a31c32;")))]
+                                                (.setStyle (format "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: %s;"
+                                                                   (cond
+                                                                     (not (:read-form-emission? node))
+                                                                     "#555"
+
+                                                                     (= :emission (:type node))
+                                                                     "#bb2047"))))]
 
                                  (conj acc node-box)))
                              []

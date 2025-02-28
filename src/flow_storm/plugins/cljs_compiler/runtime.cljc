@@ -43,10 +43,10 @@
                     (let [entry (get comp-timeline entry-idx)
                           node-id (node-id entry)
                           root? (= 1 (count parent-stack))
-                          start-analysis-node? (and (ia/fn-call-trace? entry)
-                                                    (= "cljs.analyzer" (ia/get-fn-ns entry))
-                                                    (= "analyze*" (ia/get-fn-name entry))
-                                                    (= read-form (get (ia/get-fn-args entry) 1))) 
+                          start-read-form-analysis-node? (and (ia/fn-call-trace? entry)
+                                                              (= "cljs.analyzer" (ia/get-fn-ns entry))
+                                                              (= "analyze*" (ia/get-fn-name entry))
+                                                              (= read-form (get (ia/get-fn-args entry) 1))) 
                           interesting-node (cond
                                              
                                              (and (ia/fn-call-trace? entry)
@@ -98,17 +98,19 @@
                       (cond                      
                         interesting-node
                         (cond-> acc
-                          true                   (assoc-in [:nodes node-id] interesting-node)
-                          true                   (update :parent-stack conj node-id)
-                          (not root?)            (update-in [:edges (first parent-stack)] conj node-id)
-                          start-analysis-node?   (assoc :analyzing-read-form-idx entry-idx))  
+                          true                           (assoc-in [:nodes node-id] interesting-node)
+                          true                           (update :parent-stack conj node-id)
+                          (not root?)                    (update-in [:edges (first parent-stack)] conj node-id)
+                          start-read-form-analysis-node? (assoc :analyzing-read-form-idx entry-idx))  
 
                         pass-data
                         (update-in acc [:nodes node-id-pass :passes] (fnil conj []) pass-data)
 
                         (and (ia/fn-end-trace? entry)
                              (= (ia/fn-call-idx entry) analyzing-read-form-idx))
-                        (assoc acc :analyzing-read-form-idx nil)
+                        (assoc acc
+                               :analyzing-read-form-idx nil
+                               :read-form-ast (ia/get-expr-val entry))
                         
                         (and (ia/fn-end-trace? entry)
                              (= (ia/fn-call-idx entry) (first parent-stack)))
@@ -116,38 +118,43 @@
 
                         :else
                         acc))))]
-    (select-keys
-     (reduce step-fn
-             {:parent-stack (list from-idx)
-              :analyzing-read-form-idx nil
-              :nodes {}
-              :edges {}}
-             (range from-idx (inc to-idx)))
-     [:nodes :edges])))
+    (reduce step-fn
+            {:parent-stack (list from-idx)
+             :analyzing-read-form-idx nil
+             :read-form-ast nil
+             :nodes {}
+             :edges {}}
+            (range from-idx (inc to-idx)))))
 
-(defn extract-emission-graph [comp-timeline root-emit-str-fn-call-idx]
+(defn extract-emission-graph [comp-timeline root-emit-str-fn-call-idx read-form-ast]
   (let [first-fn-call (get comp-timeline root-emit-str-fn-call-idx)
         from-idx (ia/entry-idx first-fn-call)
         to-idx (ia/get-fn-ret-idx first-fn-call)
-        step-fn (fn [{:keys [parent-stack] :as acc} entry-idx]
+        step-fn (fn [{:keys [emitting-read-form-idx parent-stack] :as acc} entry-idx]
                   (if (empty? parent-stack)
                     (reduced acc)
                     
                     (let [entry (get comp-timeline entry-idx)
-                          node-id (node-id entry)]
-
+                          node-id (node-id entry)
+                          start-read-form-emission-node? (and (ia/fn-call-trace? entry)
+                                                              (= "cljs.compiler" (ia/get-fn-ns entry))
+                                                              (= "emit" (ia/get-fn-name entry))
+                                                              (= (:form read-form-ast) (:form (get (ia/get-fn-args entry) 0))))]
+                      
                       (cond                      
                         (and (ia/fn-call-trace? entry)
                              (= "cljs.compiler" (ia/get-fn-ns entry))
                              (= "emit" (ia/get-fn-name entry)))
-                        (-> acc
-                            (assoc-in [:nodes node-id] {:type :emission
-                                                        :node-id node-id
-                                                        :idx entry-idx
-                                                        :ast-op (-> (ia/get-fn-args entry) first :op)
-                                                        :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))})
-                            (update :parent-stack conj node-id)
-                            (update-in [:edges (first parent-stack)] conj node-id))
+                        (cond-> acc
+                          true (assoc-in [:nodes node-id] {:type :emission
+                                                      :node-id node-id
+                                                      :read-form-emission? (boolean emitting-read-form-idx)
+                                                      :idx entry-idx
+                                                      :ast-op (-> (ia/get-fn-args entry) first :op)
+                                                      :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))})
+                          true                           (update :parent-stack conj node-id)                            
+                          true                           (update-in [:edges (first parent-stack)] conj node-id)
+                          start-read-form-emission-node? (assoc :emitting-read-form-idx entry-idx))
 
                         (and (ia/expr-trace? entry)
                              (= '*out* (ia/get-sub-form comp-timeline entry))
@@ -158,6 +165,10 @@
                               write-out-node-id (first parent-stack)]
                           (update-in acc [:nodes write-out-node-id :write-outs] (fnil conj []) {:write-out out-s
                                                                                                 :idx entry-idx}))
+
+                        (and (ia/fn-end-trace? entry)
+                             (= (ia/fn-call-idx entry) emitting-read-form-idx))
+                        (assoc acc :emitting-read-form-idx nil)
                         
                         (and (ia/fn-end-trace? entry)
                              (= (ia/fn-call-idx entry) (first parent-stack)))
@@ -165,17 +176,16 @@
 
                         :else
                         acc))))]
-    (select-keys
-     (reduce step-fn
-             {:parent-stack (list from-idx)
-              :nodes {root-emit-str-fn-call-idx {:type :emission
-                                                 :root? true
-                                                 :node-id root-emit-str-fn-call-idx
-                                                 :idx root-emit-str-fn-call-idx
-                                                 :fn-args-ref (rt-values/reference-value! (ia/get-fn-args first-fn-call))}}
-              :edges {}}
-             (range from-idx (inc to-idx)))
-     [:nodes :edges])))
+    (reduce step-fn
+            {:parent-stack (list from-idx)
+             :emitting-read-form-idx nil
+             :nodes {root-emit-str-fn-call-idx {:type :emission
+                                                :root? true
+                                                :node-id root-emit-str-fn-call-idx
+                                                :idx root-emit-str-fn-call-idx
+                                                :fn-args-ref (rt-values/reference-value! (ia/get-fn-args first-fn-call))}}
+             :edges {}}
+            (range from-idx (inc to-idx)))))
 
 
 
@@ -232,23 +242,25 @@
 
     (when-not (and read-ret repl-wrapping-ret analysis emission)
       (throw (ex-info "Couldn't find all high level entries" {:hl-entries hl-entries})))
-    
-    {:thread-id (ip/thread-id comp-timeline nil)
-     :high-level-graph {:nodes {:read-ret {:node-id :read-ret
-                                           :data read-ret
-                                           :root? true}
-                                :repl-wrapping-ret {:node-id :repl-wrapping-ret
-                                                    :data repl-wrapping-ret}
-                                :analysis {:node-id :analysis
-                                           :data analysis}
-                                :emission {:node-id :emission
-                                           :data emission}}
-                        :edges {:read-ret [:repl-wrapping-ret]
-                                :repl-wrapping-ret [:analysis]
-                                :analysis [:emission]
-                                :emission []}} 
-     :analysis-graph (extract-analysis-graph comp-timeline (-> analysis :fn-call :idx) read-form)
-     :emission-graph (extract-emission-graph comp-timeline (-> emission :fn-call :idx))}))
+
+    (let [{:keys [read-form-ast] :as analysis-graph} (extract-analysis-graph comp-timeline (-> analysis :fn-call :idx) read-form)
+          emission-graph (extract-emission-graph comp-timeline (-> emission :fn-call :idx) read-form-ast)]
+      {:thread-id (ip/thread-id comp-timeline nil)
+       :high-level-graph {:nodes {:read-ret {:node-id :read-ret
+                                             :data read-ret
+                                             :root? true}
+                                  :repl-wrapping-ret {:node-id :repl-wrapping-ret
+                                                      :data repl-wrapping-ret}
+                                  :analysis {:node-id :analysis
+                                             :data analysis}
+                                  :emission {:node-id :emission
+                                             :data emission}}
+                          :edges {:read-ret [:repl-wrapping-ret]
+                                  :repl-wrapping-ret [:analysis]
+                                  :analysis [:emission]
+                                  :emission []}} 
+       :analysis-graph (select-keys analysis-graph [:nodes :edges])
+       :emission-graph (select-keys emission-graph [:nodes :edges])})))
 
 (dbg-api/register-api-function :plugins.cljs-compiler/extract-compilation-graphs extract-compilation-graphs)
 
