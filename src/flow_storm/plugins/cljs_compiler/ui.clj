@@ -1,6 +1,7 @@
 (ns flow-storm.plugins.cljs-compiler.ui
   (:require [flow-storm.debugger.ui.plugins :as fs-plugins]
             [flow-storm.debugger.runtime-api :as runtime-api :refer [rt-api]]
+            [flow-storm.debugger.ui.flows.screen :refer [goto-location]]
             [flow-storm.debugger.ui.components :as ui]
             [flow-storm.debugger.ui.utils :as ui-utils]
             [flow-storm.debugger.ui.data-windows.data-windows :as data-windows]
@@ -9,13 +10,13 @@
            [javafx.scene.shape Line Path MoveTo LineTo]
            [javafx.scene Node Group]))
 
-(def read-ret-node-width 800)
-(def read-ret-node-height 200)
+(def read-ret-node-width 1500)
+(def read-ret-node-height 500)
 
-(def repl-wrapping-ret-node-width 800)
-(def repl-wrapping-ret-node-height 200)
+(def repl-wrapping-ret-node-width 1500)
+(def repl-wrapping-ret-node-height 500)
 
-(def analysis-nodes-width 300)
+(def analysis-nodes-width 400)
 (def analysis-nodes-height 150)
 
 (def emission-nodes-width 300)
@@ -78,7 +79,8 @@
                (.setOnMouseClicked
                 (ui-utils/event-handler
                     [mev]
-                  (on-click mev))))
+                  (when on-click
+                    (on-click mev)))))
         head-path (doto (Path.)
                     (.setStyle "-fx-stroke-width: 5;"))
         trans (Translate. to-x to-y)
@@ -98,16 +100,18 @@
    :childs [(ui/label :text "cljs.analyzer/parse")
             (ui/label :text form-prev)]))
 
-(defn- build-analysis-node [{:keys [form-prev passes]}]
+(defn- build-analysis-node [flow-id thread-id{:keys [form-prev passes]}]
   (let [{:keys [add-all list-view-pane]} (ui/list-view :editable? false
-                                                       :cell-factory (fn [list-cell {:keys [pass-name idx]}]
+                                                       :cell-factory (fn [list-cell {:keys [pass-name]}]
                                                                        (-> list-cell
                                                                            (ui-utils/set-text nil)
                                                                            (ui-utils/set-graphic (ui/label :text pass-name))))
                                                        :on-click (fn [mev sel-items _]
                                                                    (when (ui-utils/double-click? mev)
                                                                      (let [pass (first sel-items)]
-                                                                       (prn "@@@@@ jumping to " pass))))
+                                                                       (goto-location {:flow-id flow-id
+                                                                                       :thread-id thread-id
+                                                                                       :idx (:idx pass)}))))
                                                        :selection-mode :single)]
     (add-all passes)
     (ui/v-box
@@ -117,33 +121,45 @@
               (ui/label :text "Passes:")
               list-view-pane])))
 
-(defn- build-analysis-pane [{:keys [nodes edges]} node-id->layout]
+(defn- build-analysis-pane [flow-id thread-id {:keys [nodes edges]} node-id->layout]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
                                (let [{:keys [x y width height]} (node-id->layout nid)
-                                     call-btn (ui/button :label "Call"
-                                                         :on-click (fn []
-                                                                     (let [{:keys [fn-args-ref]} node]
-                                                                       (runtime-api/data-window-push-val-data rt-api
-                                                                                                              :plugins/cljs-compiler
-                                                                                                              fn-args-ref
-                                                                                                              {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
-                                                                                                               :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnCall"
-                                                                                                               :root? true}))))
-                                     ret-btn (ui/button :label "Return"
+                                     view-args-btn (ui/button :label "View args"
+                                                              :on-click (fn []
+                                                                          (let [{:keys [fn-args-ref]} node]
+                                                                            (runtime-api/data-window-push-val-data rt-api
+                                                                                                                   :plugins/cljs-compiler
+                                                                                                                   fn-args-ref
+                                                                                                                   {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
+                                                                                                                    :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnCall"
+                                                                                                                    :root? true}))))
+                                     view-ret-btn (ui/button :label "View ret"
+                                                             :on-click (fn []
+                                                                         (let [{:keys [ret-ref throwable-ref]} node]
+                                                                           (runtime-api/data-window-push-val-data rt-api
+                                                                                                                  :plugins/cljs-compiler
+                                                                                                                  (or ret-ref throwable-ref)
+                                                                                                                  {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
+                                                                                                                   :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnReturn"
+                                                                                                                   :root? true}))))
+                                     goto-call-btn (ui/button :label "Goto call"
                                                         :on-click (fn []
-                                                                    (let [{:keys [ret-ref throwable-ref]} node]
-                                                                      (runtime-api/data-window-push-val-data rt-api
-                                                                                                             :plugins/cljs-compiler
-                                                                                                             (or ret-ref throwable-ref)
-                                                                                                             {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
-                                                                                                              :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnReturn"
-                                                                                                              :root? true}))))
+                                                                    (let [{:keys [idx]} node]
+                                                                      (goto-location {:flow-id flow-id
+                                                                                       :thread-id thread-id
+                                                                                       :idx idx}))))
+                                     goto-ret-btn (ui/button :label "Goto return"
+                                                             :on-click (fn []
+                                                                         (let [{:keys [idx]} node]
+                                                                           (goto-location {:flow-id flow-id
+                                                                                       :thread-id thread-id
+                                                                                       :idx idx}))))
                                      node-box (doto
                                                   (ui/v-box
                                                    :childs [(case (:type node)
-                                                              :analysis (build-analysis-node node)
+                                                              :analysis (build-analysis-node flow-id thread-id node)
                                                               :parsing  (build-parse-node node))
-                                                            (ui/h-box :childs [call-btn ret-btn]
+                                                            (ui/h-box :childs [view-args-btn goto-call-btn view-ret-btn goto-ret-btn]
                                                                       :spacing 10)])
                                                 (.setLayoutX x)
                                                 (.setLayoutY y)
@@ -187,39 +203,46 @@
                                 (into arrows-vec))]
     (ui/pane :childs nodes-and-arrows-vec)))
 
-(defn- build-emission-node [{:keys [ast-op fn-args-ref write-outs]}]
+(defn- build-emission-node [flow-id thread-id {:keys [ast-op idx fn-args-ref write-outs]}]
   (let [{:keys [add-all list-view-pane]} (ui/list-view :editable? false
-                                                       :cell-factory (fn [list-cell {:keys [write-out idx]}]
+                                                       :cell-factory (fn [list-cell {:keys [write-out]}]
                                                                        (-> list-cell
                                                                            (ui-utils/set-text nil)
                                                                            (ui-utils/set-graphic (ui/label :text write-out))))
                                                        :on-click (fn [mev sel-items _]
                                                                    (when (ui-utils/double-click? mev)
                                                                      (let [write-out (first sel-items)]
-                                                                       (prn "@@@@@ jumping to " write-out))))
+                                                                       (goto-location {:flow-id flow-id
+                                                                                       :thread-id thread-id
+                                                                                       :idx (:idx write-out)}))))
                                                        :selection-mode :single)
 
-        call-btn (ui/button :label "Call"
+        view-args-btn (ui/button :label "View args"
                             :on-click (fn []
                                         (runtime-api/data-window-push-val-data rt-api
                                                                                :plugins/cljs-compiler
                                                                                fn-args-ref
                                                                                {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
                                                                                 :flow-storm.debugger.ui.data-windows.data-windows/stack-key "FnCall"
-                                                                                :root? true})))]
+                                                                                :root? true})))
+        goto-call-btn (ui/button :label "Goto call" :on-click (fn []
+                                                                (goto-location {:flow-id flow-id
+                                                                                :thread-id thread-id
+                                                                                :idx idx})))]
     (add-all write-outs)
     (ui/v-box
      :childs [(ui/label :text "cljs.compiler/emit")
-              call-btn
+              (ui/h-box :childs [view-args-btn goto-call-btn]
+                        :spacing 10)
               (ui/label :text (str "Ast OP: " (pr-str ast-op)))
               (ui/label :text "Write outs:")
               list-view-pane])))
 
-(defn- build-emission-pane [{:keys [nodes edges]} node-id->layout]
+(defn- build-emission-pane [flow-id thread-id {:keys [nodes edges]} node-id->layout]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
                                (let [{:keys [x y width height]} (node-id->layout nid)
                                      node-box (case (:type node)
-                                                :emission (build-emission-node node))
+                                                :emission (build-emission-node flow-id thread-id node))
                                      node-box (doto node-box
 
                                                 (.setLayoutX x)
@@ -264,29 +287,30 @@
 (defn- build-high-level-pane [{:keys [nodes edges]} node-id->layout {:keys [stages-labels-scale]}]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
                                (let [{:keys [x y width height]} (node-id->layout nid)]
-                                 (conj acc (labeled-container :label (case nid
-                                                                       :read-ret          "Reader"
-                                                                       :repl-wrapping-ret "Wrapping"
-                                                                       :analysis          "Analysis"
-                                                                       :emission          "Emission")
-                                                              :label-scale stages-labels-scale
-                                                              :x x
-                                                              :y y
-                                                              :width width
-                                                              :height height
-                                                              :on-ret-click (fn []
-                                                                              (let [{:keys [data node-id]} node
-                                                                                    val-ref (case node-id
-                                                                                              :read-ret          (:result data)
-                                                                                              :repl-wrapping-ret (:result data)
-                                                                                              :analysis          (-> data :fn-return :result)
-                                                                                              :emission          (-> data :fn-return :result))]
-                                                                                (runtime-api/data-window-push-val-data rt-api
-                                                                                                                       :plugins/cljs-compiler
-                                                                                                                       val-ref
-                                                                                                                       {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
-                                                                                                                        :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
-                                                                                                                        :root? true})))))))
+                                 (conj acc (labeled-container
+                                            :label (case nid
+                                                     :read-ret          "Reader"
+                                                     :repl-wrapping-ret "Wrapping"
+                                                     :analysis          "Analysis"
+                                                     :emission          "Emission")
+                                            :label-scale stages-labels-scale
+                                            :x x
+                                            :y y
+                                            :width width
+                                            :height height
+                                            :on-ret-click (fn []
+                                                            (let [{:keys [data node-id]} node
+                                                                  val-ref (case node-id
+                                                                            :read-ret          (:result data)
+                                                                            :repl-wrapping-ret (:result data)
+                                                                            :analysis          (-> data :fn-return :result)
+                                                                            :emission          (-> data :fn-return :result))]
+                                                              (runtime-api/data-window-push-val-data rt-api
+                                                                                                     :plugins/cljs-compiler
+                                                                                                     val-ref
+                                                                                                     {:flow-storm.debugger.ui.data-windows.data-windows/dw-id :plugins/cljs-compiler
+                                                                                                      :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
+                                                                                                      :root? true})))))))
                              []
                              nodes)
         arrows-vec (reduce-kv (fn [arrows node-id-from to-ids]
@@ -326,7 +350,7 @@
     {:width  (- max-x min-x)
      :height (- max-y min-y)}))
 
-(defn build-diagram-pane [{:keys [high-level-graph analysis-graph emission-graph]} scales]
+(defn build-diagram-pane [{:keys [flow-id thread-id high-level-graph analysis-graph emission-graph]} scales]
   (let [analysis-layout (layout-tree
                          (graph->nested-tree analysis-graph)
                          {:sizes (zipmap (keys (:nodes analysis-graph)) (repeat [analysis-nodes-width analysis-nodes-height]))
@@ -365,13 +389,13 @@
                           (.setPrefWidth (:width high-level-layout-size))
                           (.setPrefHeight (:height high-level-layout-size)))
 
-        analysis-pane (doto (build-analysis-pane analysis-graph analysis-layout)
+        analysis-pane (doto (build-analysis-pane flow-id thread-id analysis-graph analysis-layout)
                         (.setLayoutX (:x analysis-box-layout))
                         (.setLayoutY (:y analysis-box-layout))
                         (.setPrefWidth (:width analysis-layout-size))
                         (.setPrefHeight (:height analysis-layout-size)))
 
-        emission-pane (doto (build-emission-pane emission-graph emission-layout)
+        emission-pane (doto (build-emission-pane flow-id thread-id emission-graph emission-layout)
                         (.setLayoutX (:x emission-box-layout))
                         (.setLayoutY (:y emission-box-layout))
                         (.setPrefWidth (:width emission-layout-size))
@@ -404,12 +428,16 @@
                                     [flow-id
                                      {:exclude-repl-wrapping? true}])
 
-        diagram-scale (Scale. 0.2 0.2)
-        stages-labels-scale (Scale. 1 1)
-        diagram-pane (build-diagram-pane compilation-graphs {:diagram-scale diagram-scale
-                                                             :stages-labels-scale stages-labels-scale})
+        *zoom-perc (atom 0.2)
+        init-dia-scale (diagram-scale-interpolation @*zoom-perc)
+        init-labels-scale (stages-labels-scale-interpolation @*zoom-perc)
+        diagram-scale (Scale. init-dia-scale init-dia-scale)
+        stages-labels-scale (Scale. init-labels-scale init-labels-scale)
+        diagram-pane (build-diagram-pane compilation-graphs
+                                         {:diagram-scale diagram-scale
+                                          :stages-labels-scale stages-labels-scale})
         translation (Translate. 0 0)
-        *zoom-perc (atom 0.5)
+
         *last-coord (atom [0 0])]
 
     (-> diagram-pane .getTransforms (.addAll [diagram-scale translation]))

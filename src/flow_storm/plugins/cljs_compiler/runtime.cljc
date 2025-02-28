@@ -189,7 +189,7 @@
 
 
 
-(defn find-high-level-entries [comp-timeline opts]
+(defn find-high-level-entries [comp-timeline _opts]
   (reduce (fn [{:keys [analysis emission] :as hl-entries} entry]
             (if (every? identity (vals hl-entries))
               (reduced hl-entries)
@@ -246,6 +246,7 @@
     (let [{:keys [read-form-ast] :as analysis-graph} (extract-analysis-graph comp-timeline (-> analysis :fn-call :idx) read-form)
           emission-graph (extract-emission-graph comp-timeline (-> emission :fn-call :idx) read-form-ast)]
       {:thread-id (ip/thread-id comp-timeline nil)
+       :flow-id flow-id
        :high-level-graph {:nodes {:read-ret {:node-id :read-ret
                                              :data read-ret
                                              :root? true}
