@@ -151,9 +151,16 @@
                                                 (.setPrefHeight height)
                                                 (.setMaxWidth analysis-nodes-width)
                                                 (.setMaxHeight analysis-nodes-height)
-                                                (.setStyle (case (:type node)
-                                                             :analysis "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: #a31c32;"
-                                                             :parsing  "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: #7a3e16;")))]
+                                                (.setStyle (format "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: %s;"
+                                                                   (cond
+                                                                     (not (:read-form-analysis? node))
+                                                                     "#555"
+
+                                                                     (= :analysis (:type node))
+                                                                     "#bb2047"
+
+                                                                     (= :parsing (:type node))
+                                                                     "#7a3e16"))))]
 
                                  (conj acc node-box)))
                              []
