@@ -1,0 +1,32 @@
+.cljs-compiler .labeled-container{
+    -fx-background-color: -fx-theme-cljs-compiler-labeled-container;
+}
+
+.cljs-compiler .non-read-form-node {
+    -fx-background-color: -fx-theme-cljs-compiler-non-read-form-node;
+    -fx-border-color:#333;
+    -fx-border-width: 5;
+}
+
+.cljs-compiler .analysis-node {
+    -fx-background-color: -fx-theme-cljs-compiler-analysis-node;
+    -fx-border-color:#333;
+    -fx-border-width: 5;
+}
+
+.cljs-compiler .parsing-node {
+    -fx-background-color: -fx-theme-cljs-compiler-parsing-node;
+    -fx-border-color:#333;
+    -fx-border-width: 5;
+}
+
+.cljs-compiler .emission-node {
+    -fx-background-color: -fx-theme-cljs-compiler-emission-node;
+    -fx-border-color:#333;
+    -fx-border-width: 5;
+}
+
+.cljs-compiler .arrow {
+    -fx-stroke-width: 5;
+    -fx-stroke: -fx-theme-cljs-compiler-arrow;
+}

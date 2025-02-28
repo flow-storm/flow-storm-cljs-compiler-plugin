@@ -1,0 +1,8 @@
+* {
+    -fx-theme-cljs-compiler-labeled-container: #9c0084;
+    -fx-theme-cljs-compiler-non-read-form-node: #555;
+    -fx-theme-cljs-compiler-analysis-node: #bb2047;
+    -fx-theme-cljs-compiler-parsing-node: #7a3e16;
+    -fx-theme-cljs-compiler-emission-node: green;
+    -fx-theme-cljs-compiler-arrow: magenta;
+}

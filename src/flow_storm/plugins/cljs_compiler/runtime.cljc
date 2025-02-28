@@ -28,10 +28,6 @@
               (ia/get-bind-val b)))
           binds)))
 
-(def oexpr (get (ia/get-timeline 0 27) 41997))
-
-(ia/get-fn-call (ia/get-timeline 0 27) oexpr)
-
 (defn extract-analysis-graph [comp-timeline root-analyze*-fn-call-idx read-form]
   (let [first-fn-call (get comp-timeline root-analyze*-fn-call-idx)
         from-idx (ia/entry-idx first-fn-call)

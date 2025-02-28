@@ -51,9 +51,8 @@
     (-> ret-btn .getTransforms (.add label-scale))
 
     (doto (ui/pane
-           :childs
-           [lbl ret-btn])
-      (.setStyle "-fx-background-color: #2c569c")
+           :childs [lbl ret-btn]
+           :classes ["labeled-container"])
       (.setLayoutX x)
       (.setLayoutY y)
       (.setPrefWidth width)
@@ -75,17 +74,17 @@
   (let [line (doto (Line. from-x from-y to-x to-y)
                (.toFront)
                (.setPickOnBounds true)
-               (.setStyle "-fx-stroke-width: 5;")
                (.setOnMouseClicked
                 (ui-utils/event-handler
                     [mev]
                   (when on-click
                     (on-click mev)))))
-        head-path (doto (Path.)
-                    (.setStyle "-fx-stroke-width: 5;"))
+        head-path (Path.)
         trans (Translate. to-x to-y)
         line-angle (clalc-line-angle [from-x from-y] [to-x to-y])
         rot (Rotate. (+ line-angle 90))]
+    (ui-utils/add-class line "arrow")
+    (ui-utils/add-class head-path "arrow")
     (doto (.getElements head-path)
       (.add (MoveTo. 0 0))
       (.add (LineTo. -10 20))
@@ -160,23 +159,22 @@
                                                               :analysis (build-analysis-node flow-id thread-id node)
                                                               :parsing  (build-parse-node node))
                                                             (ui/h-box :childs [view-args-btn goto-call-btn view-ret-btn goto-ret-btn]
-                                                                      :spacing 10)])
+                                                                      :spacing 10)]
+                                                   :class (cond
+                                                            (not (:read-form-analysis? node))
+                                                            "non-read-form-node"
+
+                                                            (= :analysis (:type node))
+                                                            "analysis-node"
+
+                                                            (= :parsing (:type node))
+                                                            "parsing-node"))
                                                 (.setLayoutX x)
                                                 (.setLayoutY y)
                                                 (.setPrefWidth width)
                                                 (.setPrefHeight height)
                                                 (.setMaxWidth analysis-nodes-width)
-                                                (.setMaxHeight analysis-nodes-height)
-                                                (.setStyle (format "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: %s;"
-                                                                   (cond
-                                                                     (not (:read-form-analysis? node))
-                                                                     "#555"
-
-                                                                     (= :analysis (:type node))
-                                                                     "#bb2047"
-
-                                                                     (= :parsing (:type node))
-                                                                     "#7a3e16"))))]
+                                                (.setMaxHeight analysis-nodes-height))]
 
                                  (conj acc node-box)))
                              []
@@ -203,7 +201,7 @@
                                 (into arrows-vec))]
     (ui/pane :childs nodes-and-arrows-vec)))
 
-(defn- build-emission-node [flow-id thread-id {:keys [ast-op idx fn-args-ref write-outs]}]
+(defn- build-emission-node [flow-id thread-id {:keys [ast-op idx fn-args-ref write-outs read-form-emission?]}]
   (let [{:keys [add-all list-view-pane]} (ui/list-view :editable? false
                                                        :cell-factory (fn [list-cell {:keys [write-out]}]
                                                                        (-> list-cell
@@ -236,7 +234,10 @@
                         :spacing 10)
               (ui/label :text (str "Ast OP: " (pr-str ast-op)))
               (ui/label :text "Write outs:")
-              list-view-pane])))
+              list-view-pane]
+     :class (if read-form-emission?
+              "non-read-form-node"
+              "emission-node"))))
 
 (defn- build-emission-pane [flow-id thread-id {:keys [nodes edges]} node-id->layout]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
@@ -250,14 +251,7 @@
                                                 (.setPrefWidth width)
                                                 (.setPrefHeight height)
                                                 (.setMaxWidth emission-nodes-width)
-                                                (.setMaxHeight emission-nodes-height)
-                                                (.setStyle (format "-fx-border-color:#333; -fx-border-width: 5; -fx-background-color: %s;"
-                                                                   (cond
-                                                                     (not (:read-form-emission? node))
-                                                                     "#555"
-
-                                                                     (= :emission (:type node))
-                                                                     "#bb2047"))))]
+                                                (.setMaxHeight emission-nodes-height))]
 
                                  (conj acc node-box)))
                              []
@@ -480,24 +474,56 @@
                               (.setY translation (+ curr-trans-y delta-y))))))
     (on-new-diagram-pane diagram-pane)))
 
+(defn- build-toolbar [flow-cmb  {:keys [on-reload-click]}]
+  (let [reload-btn (ui/icon-button
+                    :icon-name "mdi-reload"
+                    :on-click on-reload-click
+                    :tooltip "Reload compiler graph")]
+    (ui/v-box :childs [(ui/h-box :childs [(ui/label :text "Flow-id :") flow-cmb reload-btn]
+                                 :spacing 5)]
+              :spacing 5)))
+
+(defn- on-create [_]
+  (let [digram-outer-pane (ui/pane :childs [])
+        *flow-id (atom 0)
+        flow-cmb (ui/combo-box :items []
+                               :cell-factory (fn [_ flow-id] (ui/label :text (str flow-id)))
+                               :button-factory (fn [_ flow-id] (ui/label :text (str flow-id)))
+                               :on-change (fn [_ flow-id] (when flow-id (reset! *flow-id flow-id))))
+        set-diagram-pane (fn [p]
+                           (.clear (.getChildren digram-outer-pane))
+                           (.add (.getChildren digram-outer-pane) p))
+        toolbar-pane (build-toolbar flow-cmb
+                                    {:on-reload-click
+                                     (fn []
+                                       (let [flow-id @*flow-id]
+                                         (refresh-click flow-id {:on-new-diagram-pane set-diagram-pane})))})
+
+        dw-pane (data-windows/data-window-pane {:data-window-id :plugins/cljs-compiler})
+        main-box (ui/border-pane
+                  :top toolbar-pane
+                  :center (ui/split :orientation :horizontal
+                                    :sizes [0.7]
+                                    :childs [digram-outer-pane dw-pane]))]
+    {:fx/node main-box
+     :flow-cmb flow-cmb
+     :selected-flow-id-ref *flow-id
+     :flow-clear (fn [flow-id])}))
+
+(defn- on-focus [{:keys [flow-cmb selected-flow-id-ref]}]
+  (let [flow-ids (into #{} (map first (runtime-api/all-flows-threads rt-api)))]
+    (ui-utils/combo-box-set-items flow-cmb flow-ids)
+    (ui-utils/combo-box-set-selected flow-cmb @selected-flow-id-ref)))
+
+(defn- on-flow-clear [flow-id {:keys [flow-clear]}]
+  (flow-clear flow-id))
+
 (fs-plugins/register-plugin
  :cljs-compiler
  {:label "Cljs compiler"
-  :on-create (fn [_]
-               (let [digram-outer-pane (ui/pane :childs [])
-                     set-diagram-pane (fn [p]
-                                        (.clear (.getChildren digram-outer-pane))
-                                        (.add (.getChildren digram-outer-pane) p))
-                     flow-id-txt (ui/text-field :initial-text "0")
-                     refresh-btn (ui/button :label "Refresh"
-                                            :on-click (fn []
-                                                        (let [flow-id (parse-long (.getText flow-id-txt))]
-                                                          (refresh-click flow-id {:on-new-diagram-pane set-diagram-pane}))))
-                     tools-box (ui/h-box :childs [(ui/label :text "FlowId:") flow-id-txt refresh-btn])
-                     dw-pane (data-windows/data-window-pane {:data-window-id :plugins/cljs-compiler})
-                     main-box (ui/border-pane
-                               :top tools-box
-                               :center (ui/split :orientation :horizontal
-                                                 :sizes [0.7]
-                                                 :childs [digram-outer-pane dw-pane]))]
-                 {:fx/node main-box}))})
+  :css-resource       "flow-storm-cljs-compiler-plugin/styles.css"
+  :dark-css-resource  "flow-storm-cljs-compiler-plugin/dark.css"
+  :light-css-resource "flow-storm-cljs-compiler-plugin/light.css"
+  :on-focus on-focus
+  :on-create on-create
+  :on-flow-clear on-flow-clear})

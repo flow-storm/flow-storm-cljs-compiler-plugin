@@ -1,1 +1,2 @@
-{:deps {clj-tree-layout/clj-tree-layout {:mvn/version "0.1.0"}}}
+{:paths ["src" "resources"]
+ :deps {clj-tree-layout/clj-tree-layout {:mvn/version "0.1.0"}}}
