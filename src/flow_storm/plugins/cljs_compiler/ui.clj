@@ -17,7 +17,7 @@
 (def repl-wrapping-ret-node-height 800)
 
 (def analysis-nodes-width 400)
-(def analysis-nodes-height 150)
+(def analysis-nodes-height 250)
 
 (def emission-nodes-width 300)
 (def emission-nodes-height 250)
@@ -58,7 +58,7 @@
       (.setLayoutX x)
       (.setLayoutY y)
       (.setPrefWidth width)
-      (.setPrefHeight height #_(+ height ret-btn-height 20)))))
+      (.setPrefHeight height))))
 
 (defn clalc-line-angle
   "Calculates the angle of the line passing through points (x1, y1) and (x2, y2).

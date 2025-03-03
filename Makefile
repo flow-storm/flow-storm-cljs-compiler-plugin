@@ -6,7 +6,7 @@ clean:
 lint:
 	clj-kondo --config .clj-kondo/config.edn --lint src
 
-flow-storm-async-flow-plugin.jar:
+flow-storm-cljs-compiler-plugin.jar:
 	clj -T:build jar
 
 install: flow-storm-cljs-compiler-plugin.jar
