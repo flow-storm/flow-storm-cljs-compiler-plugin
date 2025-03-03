@@ -1,8 +1,9 @@
 * {
-    -fx-theme-cljs-compiler-labeled-container: #9c0084;
-    -fx-theme-cljs-compiler-non-read-form-node: #555;
-    -fx-theme-cljs-compiler-analysis-node: #bb2047;
-    -fx-theme-cljs-compiler-parsing-node: #7a3e16;
-    -fx-theme-cljs-compiler-emission-node: green;
-    -fx-theme-cljs-compiler-arrow: magenta;
+    -fx-theme-cljs-compiler-labeled-container: #9aa9ed;
+    -fx-theme-cljs-compiler-non-read-form-node: #bbb;
+    -fx-theme-cljs-compiler-analysis-node: #db7287;
+    -fx-theme-cljs-compiler-parsing-node: #dba172;
+    -fx-theme-cljs-compiler-emission-node: #db7287;
+    -fx-theme-cljs-compiler-arrow: #630347;
+    -fx-theme-cljs-compiler-buttons: #425299;
 }

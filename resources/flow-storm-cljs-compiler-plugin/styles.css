@@ -30,3 +30,16 @@
     -fx-stroke-width: 5;
     -fx-stroke: -fx-theme-cljs-compiler-arrow;
 }
+
+.cljs-compiler .action-btn {
+    -fx-background-color: -fx-theme-cljs-compiler-buttons;
+}
+
+.cljs-compiler .labeled-container {
+    -fx-alignment: center;
+    -fx-padding: 30 30 30 30;
+}
+
+.cljs-compiler .label.fn-name {
+    -fx-text-fill: black;
+}
