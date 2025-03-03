@@ -136,18 +136,17 @@
                                                               (= "cljs.compiler" (ia/get-fn-ns entry))
                                                               (= "emit" (ia/get-fn-name entry))
                                                               (= (:form read-form-ast) (:form (get (ia/get-fn-args entry) 0))))]
-                      
                       (cond                      
                         (and (ia/fn-call-trace? entry)
                              (= "cljs.compiler" (ia/get-fn-ns entry))
                              (= "emit" (ia/get-fn-name entry)))
                         (cond-> acc
                           true (assoc-in [:nodes node-id] {:type :emission
-                                                      :node-id node-id
-                                                      :read-form-emission? (boolean emitting-read-form-idx)
-                                                      :idx entry-idx
-                                                      :ast-op (-> (ia/get-fn-args entry) first :op)
-                                                      :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))})
+                                                           :node-id node-id
+                                                           :read-form-emission? (boolean emitting-read-form-idx)
+                                                           :idx entry-idx
+                                                           :ast-op (-> (ia/get-fn-args entry) first :op)
+                                                           :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))})
                           true                           (update :parent-stack conj node-id)                            
                           true                           (update-in [:edges (first parent-stack)] conj node-id)
                           start-read-form-emission-node? (assoc :emitting-read-form-idx entry-idx))

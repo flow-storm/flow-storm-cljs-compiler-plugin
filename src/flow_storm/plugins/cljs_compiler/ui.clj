@@ -248,8 +248,8 @@
               list-view-pane]
      :spacing 10
      :class (if read-form-emission?
-              "non-read-form-node"
-              "emission-node"))))
+              "emission-node"
+              "non-read-form-node"))))
 
 (defn- build-emission-pane [flow-id thread-id {:keys [nodes edges]} node-id->layout]
   (let [nodes-vec (reduce-kv (fn [acc nid node]
