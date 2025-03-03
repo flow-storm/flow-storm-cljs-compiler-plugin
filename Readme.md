@@ -4,9 +4,10 @@
 ![demo](./images/plugin_demo_1.png)
 ![demo](./images/plugin_demo_2.png)
 
-The ClojureScript compiler plugin allows you to visualize your compilings recordings.
+The ClojureScript compiler plugin helps you visualize and move aruod your ClojureScript compilations recordings
+by representing them as an interactive graph.
 
-It can help you if you are troubleshoting the compiler, developing it or just want to learn how it works. 
+It can help you troubleshoting the compiler, develope it or just help you learn how it works. 
 
 **Requires FlowStorm >= 4.2.0**
 
@@ -27,7 +28,7 @@ Add an extra alias to the deps.edn file :
   :storm {:classpath-overrides {org.clojure/clojure nil}
           :extra-deps {com.github.flow-storm/flow-storm-dbg {:mvn/version "4.2.0"}
                        com.github.flow-storm/clojure {:mvn/version "1.12.0-4"}
-                       com.github.flow-storm/flow-storm-cljs-compiler-plugin {:mvn/version "LATEST"}}
+                       com.github.flow-storm/flow-storm-cljs-compiler-plugin {:mvn/version "1.0.0-beta"}}
           :jvm-opts ["-Dvisualvm.display.name=CLJSCompiler"
                      "-Dclojure.storm.instrumentEnable=true"
                      "-Xms5000m" "-Xmx5000m"
@@ -57,8 +58,8 @@ ClojureScript 0.0.398608251
 cljs.user=> 
 ```
 
-A browser window should popup, and you should now have a ClojureScript repl. Try to evaluate some 
-forms to see everything is working smoothly.
+A browser window should popup, and you should now have a ClojureScript repl.
+Try to evaluate some forms to make sure everything is working smoothly.
 
 # Usage
 
@@ -66,7 +67,7 @@ Let's say you want to understand the compilation of `(defn sum [a b] (+ a b))`.
 
 - First start recording on the flow storm UI
 - Now evaluate the form on the ClojureScript repl
-- You should see the recordings poping up on the FlowStorm UI Flows tab
+- You should see recordings poping up on the FlowStorm UI Flows tab
 - You can now safely stop recording
 - Go to the `ClojureScript compiler` plugin tab
 - Select the flow id you recorded in (0 by default) and click the refresh button
@@ -74,14 +75,12 @@ Let's say you want to understand the compilation of `(defn sum [a b] (+ a b))`.
 
 ## High level overview
 
-The graph is composed of 4 main stages :
+The graph is composed of 4 main stages, some of them with their own sub graph.
 
-- Reader (the output of the reader on your repl form)
+- Reader (the output of the reader for your repl form)
 - Repl wrapping (the wrapping the compiler does en every form that is typed at the repl)
 - Analysis and parsing (analisys, parsing and optimizations)
 - Emission (javascript code strings generation)
-
-some of them with their own sub graph.
 
 You can use the mouse left click for panning and the wheel for zooming.
 
@@ -92,9 +91,10 @@ clicking `Goto return` should take you to the code stepper at that point in time
 
 The analysis/parsing subgraph is composed of nodes that represent calls to `cljs.analyzer/analyze*` and `cljs.analyzer/parse`.
 
-The greyed out nodes are the analysis/parsing of the wrapping parts while the highlighted ones represent your form analysis and parsing.
+The greyed out nodes are the analysis/parsing of the wrapping parts while the highlighted ones represent your form analysis and parsing,
+which is probably the most interesting one.
 
-Each node shows the sub-form it is working with and you can use the buttons quickly view call arguments, return values and jumping 
+Each node shows the sub-form it is working with. Use the buttons to quickly view call arguments, return values and jumping 
 to the code stepper at those points in time.
 
 Analysis nodes also contains a list of the `passes` which applied at that analysis instance. Double clicking on a pass will also take you
