@@ -325,11 +325,11 @@
                                                                                                       :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
                                                                                                       :root? true})))
                                             :on-goto-ret-click (fn []
-                                                                 (let [{:keys [data]} node]
-                                                                   (let [idx (or (:idx data) (-> data :fn-return :idx))]
-                                                                     (goto-location {:flow-id flow-id
-                                                                                     :thread-id thread-id
-                                                                                     :idx idx}))))))))
+                                                                 (let [{:keys [data]} node
+                                                                       idx (or (:idx data) (-> data :fn-return :idx))]
+                                                                   (goto-location {:flow-id flow-id
+                                                                                   :thread-id thread-id
+                                                                                   :idx idx})))))))
                              []
                              nodes)
         arrows-vec (reduce-kv (fn [arrows node-id-from to-ids]
@@ -524,7 +524,8 @@
                                :on-change (fn [_ flow-id] (when flow-id (reset! *flow-id flow-id))))
         set-diagram-pane (fn [p]
                            (.clear (.getChildren digram-outer-pane))
-                           (.add (.getChildren digram-outer-pane) p))
+                           (when p
+                             (.add (.getChildren digram-outer-pane) p)))
         toolbar-pane (build-toolbar flow-cmb
                                     {:on-reload-click
                                      (fn []
@@ -540,7 +541,9 @@
     {:fx/node main-box
      :flow-cmb flow-cmb
      :selected-flow-id-ref *flow-id
-     :flow-clear (fn [flow-id])}))
+     :flow-clear (fn [flow-id]
+                   (when (= flow-id @*flow-id)
+                     (set-diagram-pane nil)))}))
 
 (defn- on-focus [{:keys [flow-cmb selected-flow-id-ref]}]
   (let [flow-ids (into #{} (map first (runtime-api/all-flows-threads rt-api)))]

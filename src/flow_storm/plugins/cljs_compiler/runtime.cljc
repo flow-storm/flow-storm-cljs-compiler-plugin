@@ -2,7 +2,32 @@
   (:require [flow-storm.runtime.indexes.api :as ia]
             [flow-storm.runtime.indexes.protocols :as ip]
             [flow-storm.runtime.debuggers-api :as dbg-api]
-            [flow-storm.runtime.values :as rt-values]))
+            [flow-storm.runtime.values :as rt-values]
+            [cljs.vendor.clojure.tools.reader.reader-types :as reader-types])
+  (:import [java.io StringWriter]
+           [java.lang StringBuilder]
+           [cljs.vendor.clojure.tools.reader.reader_types SourceLoggingPushbackReader]))
+
+
+(extend-protocol rt-values/SnapshotP
+  StringWriter
+  (snapshot-value [^StringWriter sw]
+    {:ref/type "java.io.StringWriter"
+     :ref/buffer-snapshot (.toString sw)}))
+
+(extend-protocol rt-values/SnapshotP
+  StringBuilder
+  (snapshot-value [^StringBuilder sb]
+    {:ref/type "java.lang.StringBuilder"
+     :ref/buffer-snapshot (.toString sb)}))
+
+(extend-protocol rt-values/SnapshotP
+  SourceLoggingPushbackReader
+  (snapshot-value [^SourceLoggingPushbackReader reader]
+    {:ref/type "cljs.vendor.clojure.tools.reader.reader_types.SourceLoggingPushbackReader"
+     :line (reader-types/get-line-number reader)
+     :column (reader-types/get-column-number reader)
+     :file-name (reader-types/get-file-name reader)}))
 
 (defn get-compilation-timeline
   "Return the first timeline that recorded an entry with a
