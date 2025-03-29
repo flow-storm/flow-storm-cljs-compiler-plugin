@@ -1,6 +1,5 @@
 (ns flow-storm.plugins.cljs-compiler.runtime
   (:require [flow-storm.runtime.indexes.api :as ia]
-            [flow-storm.runtime.indexes.protocols :as ip]
             [flow-storm.runtime.debuggers-api :as dbg-api]
             [flow-storm.runtime.values :as rt-values]
             [cljs.vendor.clojure.tools.reader.reader-types :as reader-types])
@@ -29,6 +28,11 @@
      :column (reader-types/get-column-number reader)
      :file-name (reader-types/get-file-name reader)}))
 
+(defn ensure-indexes [{:keys [fn-call-idx] :as immutable-entry} idx]  
+  (assoc immutable-entry
+         :idx idx
+         :fn-call-idx (or fn-call-idx idx)))
+
 (defn get-compilation-timeline
   "Return the first timeline that recorded an entry with a
   function call to cljs.repl/eval-cljs"
@@ -43,9 +47,6 @@
               tl)))    
         (ia/all-threads-ids flow-id)))
 
-(defn node-id [entry]
-  (ia/entry-idx entry))
-
 (defn- get-binding-val [fn-call symb-name]
   (let [binds (ia/get-fn-bindings fn-call)]
     (some (fn [b]
@@ -55,14 +56,14 @@
 
 (defn extract-analysis-graph [comp-timeline root-analyze*-fn-call-idx read-form]
   (let [first-fn-call (get comp-timeline root-analyze*-fn-call-idx)
-        from-idx (ia/entry-idx first-fn-call)
+        from-idx root-analyze*-fn-call-idx
         to-idx (ia/get-fn-ret-idx first-fn-call)
         step-fn (fn [{:keys [analyzing-read-form-idx parent-stack] :as acc} entry-idx]
                   (if (empty? parent-stack)
                     (reduced acc)
                     
                     (let [entry (get comp-timeline entry-idx)
-                          node-id (node-id entry)
+                          node-id entry-idx
                           root? (= 1 (count parent-stack))
                           start-read-form-analysis-node? (and (ia/fn-call-trace? entry)
                                                               (= "cljs.analyzer" (ia/get-fn-ns entry))
@@ -103,9 +104,9 @@
                                                  (ia/fn-unwind-trace? fn-end)
                                                  (assoc interesting-node :throwable-ref (rt-values/reference-value! (ia/get-throwable fn-end))))))
                           [node-id-pass pass-data] (when (and (ia/expr-trace? entry)
-                                                              (= '(pass env ast opts) (ia/get-sub-form comp-timeline entry)))
+                                                              (= '(pass env ast opts) (ia/get-sub-form comp-timeline entry-idx)))
                                                      (let [pass-res-val (ia/get-expr-val entry)
-                                                           pass-wrap-anon-fn (ia/get-fn-call comp-timeline entry)
+                                                           pass-wrap-anon-fn (ia/get-fn-call comp-timeline entry-idx)
                                                            ast-bind-val (get-binding-val pass-wrap-anon-fn "ast")
                                                            pass-bind-val (get-binding-val pass-wrap-anon-fn "pass")]
                                                        (when (not (identical? pass-res-val ast-bind-val))
@@ -149,14 +150,14 @@
 
 (defn extract-emission-graph [comp-timeline root-emit-str-fn-call-idx read-form-ast]
   (let [first-fn-call (get comp-timeline root-emit-str-fn-call-idx)
-        from-idx (ia/entry-idx first-fn-call)
+        from-idx root-emit-str-fn-call-idx
         to-idx (ia/get-fn-ret-idx first-fn-call)
         step-fn (fn [{:keys [emitting-read-form-idx parent-stack] :as acc} entry-idx]
                   (if (empty? parent-stack)
                     (reduced acc)
                     
                     (let [entry (get comp-timeline entry-idx)
-                          node-id (node-id entry)
+                          node-id entry-idx
                           start-read-form-emission-node? (and (ia/fn-call-trace? entry)
                                                               (= "cljs.compiler" (ia/get-fn-ns entry))
                                                               (= "emit" (ia/get-fn-name entry))
@@ -177,8 +178,8 @@
                           start-read-form-emission-node? (assoc :emitting-read-form-idx entry-idx))
 
                         (and (ia/expr-trace? entry)
-                             (= '*out* (ia/get-sub-form comp-timeline entry))
-                             (let [fn-call (ia/get-fn-call comp-timeline entry)]
+                             (= '*out* (ia/get-sub-form comp-timeline entry-idx))
+                             (let [fn-call (ia/get-fn-call comp-timeline entry-idx)]
                                (and (= "cljs.compiler" (ia/get-fn-ns fn-call))
                                     (= "emits" (ia/get-fn-name fn-call)))))
                         (let [out-s (ia/get-expr-val (get comp-timeline (inc entry-idx)))
@@ -208,51 +209,58 @@
             (range from-idx (inc to-idx)))))
 
 
+(defn- immutable-reference-entry [entry entry-idx]
+  (-> entry
+      ia/as-immutable
+      (ensure-indexes entry-idx)
+      dbg-api/reference-timeline-entry!))
 
 (defn find-high-level-entries [comp-timeline _opts]
-  (reduce (fn [{:keys [analysis emission] :as hl-entries} entry]
+  (reduce (fn [{:keys [analysis emission entry-idx] :as hl-entries} entry]
             (if (every? identity (vals hl-entries))
               (reduced hl-entries)
 
-              (cond
-                ;; read-ret
-                (and (ia/fn-return-trace? entry)
-                     (let [fn-call (ia/get-fn-call comp-timeline entry)]
-                       (and (= "cljs.vendor.clojure.tools.reader" (ia/get-fn-ns fn-call))
-                            (= "read" (ia/get-fn-name fn-call)))))
-                (assoc hl-entries
-                       :read-ret (dbg-api/reference-timeline-entry! (ia/as-immutable entry))
-                       :read-form (ia/get-expr-val entry))
+              (let [hl-entries' (cond
+                                  ;; read-ret
+                                  (and (ia/fn-return-trace? entry)
+                                       (let [fn-call (ia/get-fn-call comp-timeline entry-idx)]
+                                         (and (= "cljs.vendor.clojure.tools.reader" (ia/get-fn-ns fn-call))
+                                              (= "read" (ia/get-fn-name fn-call)))))
+                                  (assoc hl-entries
+                                         :read-ret (immutable-reference-entry entry entry-idx)
+                                         :read-form (ia/get-expr-val entry))
 
-                ;; repl-wrapping-ret
-                (and (ia/expr-trace? entry)
-                     (= '(wrap form) (ia/get-sub-form comp-timeline entry)))
-                (assoc hl-entries :repl-wrapping-ret (dbg-api/reference-timeline-entry! (ia/as-immutable entry)))
+                                  ;; repl-wrapping-ret
+                                  (and (ia/expr-trace? entry)
+                                       (= '(wrap form) (ia/get-sub-form comp-timeline entry-idx)))
+                                  (assoc hl-entries :repl-wrapping-ret (immutable-reference-entry entry entry-idx))
 
-                ;; analysis
-                (and (nil? analysis)
-                     (ia/fn-call-trace? entry)
-                     (= "cljs.analyzer" (ia/get-fn-ns entry))
-                     (= "analyze*" (ia/get-fn-name entry)))
-                (let [fn-ret (get comp-timeline (ia/get-fn-ret-idx entry))]
-                  (assoc hl-entries :analysis {:fn-call   (dbg-api/reference-timeline-entry! (ia/as-immutable entry))
-                                               :fn-return (dbg-api/reference-timeline-entry! (ia/as-immutable fn-ret))}))
+                                  ;; analysis
+                                  (and (nil? analysis)
+                                       (ia/fn-call-trace? entry)
+                                       (= "cljs.analyzer" (ia/get-fn-ns entry))
+                                       (= "analyze*" (ia/get-fn-name entry)))
+                                  (let [fn-ret (get comp-timeline (ia/get-fn-ret-idx entry))]
+                                    (assoc hl-entries :analysis {:fn-call   (immutable-reference-entry entry entry-idx)
+                                                                 :fn-return (immutable-reference-entry fn-ret entry-idx)}))
 
-                ;; emission
-                (and (nil? emission)
-                     (ia/fn-call-trace? entry)
-                     (= "cljs.compiler" (ia/get-fn-ns entry))
-                     (= "emit-str" (ia/get-fn-name entry)))
-                (let [fn-ret (get comp-timeline (ia/get-fn-ret-idx entry))]                  
-                  (assoc hl-entries :emission {:fn-call   (dbg-api/reference-timeline-entry! (ia/as-immutable entry))
-                                               :fn-return (dbg-api/reference-timeline-entry! (ia/as-immutable fn-ret))}))
-                
-                :else hl-entries)))
+                                  ;; emission
+                                  (and (nil? emission)
+                                       (ia/fn-call-trace? entry)
+                                       (= "cljs.compiler" (ia/get-fn-ns entry))
+                                       (= "emit-str" (ia/get-fn-name entry)))
+                                  (let [fn-ret (get comp-timeline (ia/get-fn-ret-idx entry))]                  
+                                    (assoc hl-entries :emission {:fn-call   (immutable-reference-entry entry entry-idx)
+                                                                 :fn-return (immutable-reference-entry fn-ret entry-idx)}))
+                                  
+                                  :else hl-entries)]
+                (update hl-entries' :entry-idx inc))))
           {:read-ret nil
            :read-form nil
            :repl-wrapping-ret nil
            :analysis nil
-           :emission nil}
+           :emission nil
+           :entry-idx 0}
           comp-timeline))
 
 (defn extract-compilation-graphs [flow-id opts]
@@ -265,7 +273,7 @@
 
     (let [{:keys [read-form-ast] :as analysis-graph} (extract-analysis-graph comp-timeline (-> analysis :fn-call :idx) read-form)
           emission-graph (extract-emission-graph comp-timeline (-> emission :fn-call :idx) read-form-ast)]
-      {:thread-id (ip/thread-id comp-timeline nil)
+      {:thread-id (ia/thread-id comp-timeline nil)
        :flow-id flow-id
        :high-level-graph {:nodes {:read-ret {:node-id :read-ret
                                              :data read-ret

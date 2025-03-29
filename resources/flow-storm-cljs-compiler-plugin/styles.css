@@ -2,6 +2,11 @@
     -fx-background-color: -fx-theme-cljs-compiler-labeled-container;
 }
 
+.cljs-compiler .labeled-container {-fx-font-size: 13;}
+.cljs-compiler .labeled-container .btn-sm {-fx-font-size: 10;}
+.cljs-compiler .labeled-container .btn-xs {-fx-font-size: 8;}
+
+
 .cljs-compiler .non-read-form-node {
     -fx-background-color: -fx-theme-cljs-compiler-non-read-form-node;
     -fx-border-color:#333;
