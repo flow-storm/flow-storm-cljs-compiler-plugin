@@ -273,7 +273,7 @@
 
     (let [{:keys [read-form-ast] :as analysis-graph} (extract-analysis-graph comp-timeline (-> analysis :fn-call :idx) read-form)
           emission-graph (extract-emission-graph comp-timeline (-> emission :fn-call :idx) read-form-ast)]
-      {:thread-id (ia/thread-id comp-timeline nil)
+      {:thread-id (ia/timeline-thread-id comp-timeline nil)
        :flow-id flow-id
        :high-level-graph {:nodes {:read-ret {:node-id :read-ret
                                              :data read-ret
