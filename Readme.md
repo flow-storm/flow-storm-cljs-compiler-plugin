@@ -28,7 +28,7 @@ Add an extra alias to the deps.edn file :
   :storm {:classpath-overrides {org.clojure/clojure nil}
           :extra-deps {com.github.flow-storm/flow-storm-dbg {:mvn/version "4.3.0"} ;; checkout the latest version
                        com.github.flow-storm/clojure {:mvn/version "1.12.0-9"} ;; checkout the latest version
-                       com.github.flow-storm/flow-storm-cljs-compiler-plugin {:mvn/version "1.0.0-beta3"}} ;; checkout the latest version
+                       com.github.flow-storm/flow-storm-cljs-compiler-plugin {:mvn/version "1.0.0-beta4"}} ;; checkout the latest version
           :jvm-opts ["-Dvisualvm.display.name=CLJSCompiler"
                      "-Dclojure.storm.instrumentEnable=true"
                      "-Xms5000m" "-Xmx5000m"
