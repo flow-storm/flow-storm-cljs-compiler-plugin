@@ -150,17 +150,17 @@
                                      goto-call-btn (ui/button :label "Goto call"
                                                               :classes ["action-btn"]
                                                               :on-click (fn []
-                                                                          (let [{:keys [idx]} node]
+                                                                          (let [{:keys [fn-call-idx]} node]
                                                                             (goto-location {:flow-id flow-id
                                                                                             :thread-id thread-id
-                                                                                            :idx idx}))))
+                                                                                            :idx fn-call-idx}))))
                                      goto-ret-btn (ui/button :label "Goto return"
                                                              :classes ["action-btn"]
                                                              :on-click (fn []
-                                                                         (let [{:keys [idx]} node]
+                                                                         (let [{:keys [fn-ret-idx]} node]
                                                                            (goto-location {:flow-id flow-id
-                                                                                       :thread-id thread-id
-                                                                                       :idx idx}))))
+                                                                                           :thread-id thread-id
+                                                                                           :idx fn-ret-idx}))))
                                      node-box (doto
                                                   (ui/v-box
                                                    :childs [(case (:type node)
@@ -209,7 +209,7 @@
                                 (into arrows-vec))]
     (ui/pane :childs nodes-and-arrows-vec)))
 
-(defn- build-emission-node [flow-id thread-id {:keys [ast-op idx fn-args-ref write-outs read-form-emission?]}]
+(defn- build-emission-node [flow-id thread-id {:keys [ast-op fn-call-idx fn-args-ref write-outs read-form-emission?]}]
   (let [{:keys [add-all list-view-pane]} (ui/list-view :editable? false
                                                        :cell-factory (fn [list-cell {:keys [write-out]}]
                                                                        (-> list-cell
@@ -237,7 +237,7 @@
                                  :on-click (fn []
                                              (goto-location {:flow-id flow-id
                                                              :thread-id thread-id
-                                                             :idx idx})))]
+                                                             :idx fn-call-idx})))]
     (add-all write-outs)
     (ui/v-box
      :childs [(ui/label :text "cljs.compiler/emit" :class "fn-name")
@@ -325,8 +325,12 @@
                                                                                                       :flow-storm.debugger.ui.data-windows.data-windows/stack-key "Data"
                                                                                                       :root? true})))
                                             :on-goto-ret-click (fn []
-                                                                 (let [{:keys [data]} node
-                                                                       idx (or (:idx data) (-> data :fn-return :idx))]
+                                                                 (let [{:keys [node-id data]} node
+                                                                       idx (case node-id
+                                                                             :read-ret          (:idx data)
+                                                                             :repl-wrapping-ret (:idx data)
+                                                                             :analysis          (-> data :fn-call :ret-idx)
+                                                                             :emission          (-> data :fn-call :ret-idx))]
                                                                    (goto-location {:flow-id flow-id
                                                                                    :thread-id thread-id
                                                                                    :idx idx})))))))

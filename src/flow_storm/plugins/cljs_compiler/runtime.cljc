@@ -78,7 +78,7 @@
                                               :root? root?
                                               :node-id node-id
                                               :read-form-analysis? (boolean analyzing-read-form-idx)
-                                              :idx entry-idx
+                                              :fn-call-idx entry-idx
                                               :form-prev (pr-str (get (ia/get-fn-args entry) 1))
                                               :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))}
 
@@ -87,7 +87,7 @@
                                                   (= "parse" (ia/get-fn-name entry)))
                                              {:type :parsing
                                               :node-id node-id
-                                              :idx entry-idx
+                                              :fn-call-idx entry-idx
                                               :read-form-analysis? (boolean analyzing-read-form-idx)
                                               :form-prev (pr-str (get (ia/get-fn-args entry) 2))
                                               :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))}
@@ -96,13 +96,18 @@
                                              nil)
                           
                           interesting-node (when interesting-node
-                                             (let [fn-end (get comp-timeline (ia/get-fn-ret-idx entry))]
+                                             (let [end-idx (ia/get-fn-ret-idx entry)
+                                                   fn-end (get comp-timeline end-idx)]
                                                (cond
                                                  (ia/fn-return-trace? fn-end)
-                                                 (assoc interesting-node :ret-ref (rt-values/reference-value! (ia/get-expr-val fn-end)))
+                                                 (assoc interesting-node
+                                                        :ret-ref (rt-values/reference-value! (ia/get-expr-val fn-end))
+                                                        :fn-ret-idx end-idx)
 
                                                  (ia/fn-unwind-trace? fn-end)
-                                                 (assoc interesting-node :throwable-ref (rt-values/reference-value! (ia/get-throwable fn-end))))))
+                                                 (assoc interesting-node
+                                                        :throwable-ref (rt-values/reference-value! (ia/get-throwable fn-end))
+                                                        :fn-ret-idx end-idx))))
                           [node-id-pass pass-data] (when (and (ia/expr-trace? entry)
                                                               (= '(pass env ast opts) (ia/get-sub-form comp-timeline entry-idx)))
                                                      (let [pass-res-val (ia/get-expr-val entry)
@@ -170,7 +175,7 @@
                           true (assoc-in [:nodes node-id] {:type :emission
                                                            :node-id node-id
                                                            :read-form-emission? (boolean emitting-read-form-idx)
-                                                           :idx entry-idx
+                                                           :fn-call-idx entry-idx
                                                            :ast-op (-> (ia/get-fn-args entry) first :op)
                                                            :fn-args-ref (rt-values/reference-value! (ia/get-fn-args entry))})
                           true                           (update :parent-stack conj node-id)                            
@@ -240,18 +245,20 @@
                                        (ia/fn-call-trace? entry)
                                        (= "cljs.analyzer" (ia/get-fn-ns entry))
                                        (= "analyze*" (ia/get-fn-name entry)))
-                                  (let [fn-ret (get comp-timeline (ia/get-fn-ret-idx entry))]
+                                  (let [ret-idx (ia/get-fn-ret-idx entry)
+                                        fn-ret (get comp-timeline ret-idx)]
                                     (assoc hl-entries :analysis {:fn-call   (immutable-reference-entry entry entry-idx)
-                                                                 :fn-return (immutable-reference-entry fn-ret entry-idx)}))
+                                                                 :fn-return (immutable-reference-entry fn-ret ret-idx)}))
 
                                   ;; emission
                                   (and (nil? emission)
                                        (ia/fn-call-trace? entry)
                                        (= "cljs.compiler" (ia/get-fn-ns entry))
                                        (= "emit-str" (ia/get-fn-name entry)))
-                                  (let [fn-ret (get comp-timeline (ia/get-fn-ret-idx entry))]                  
+                                  (let [ret-idx (ia/get-fn-ret-idx entry)
+                                        fn-ret (get comp-timeline ret-idx)]                  
                                     (assoc hl-entries :emission {:fn-call   (immutable-reference-entry entry entry-idx)
-                                                                 :fn-return (immutable-reference-entry fn-ret entry-idx)}))
+                                                                 :fn-return (immutable-reference-entry fn-ret ret-idx)}))
                                   
                                   :else hl-entries)]
                 (update hl-entries' :entry-idx inc))))
